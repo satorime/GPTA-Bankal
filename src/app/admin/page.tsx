@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import type { ChangeEvent } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -13,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Edit, Layers3, Plus, RefreshCcw, Trash2, Users, Wallet } from "lucide-react";
+import { Download, Edit, Layers3, Plus, RefreshCcw, Trash2, Upload, Users, Wallet } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,8 +90,12 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<"students" | "requirements" | "payments">(
     "students"
   );
+  const [studentSearch, setStudentSearch] = useState("");
+  const deferredStudentSearch = useDeferredValue(studentSearch);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const queryClient = useQueryClient();
 
   const studentForm = useForm<StudentFormValues>({ defaultValues: studentDefaults });
@@ -102,8 +107,8 @@ export default function AdminPage() {
   const [editingPayment, setEditingPayment] = useState<StudentPayment | null>(null);
 
   const studentsQuery = useQuery<Student[]>({
-    queryKey: ["students"],
-    queryFn: () => api.getStudents(),
+    queryKey: ["students", deferredStudentSearch],
+    queryFn: () => api.getStudents(deferredStudentSearch || undefined),
   });
 
   const requirementsQuery = useQuery<PaymentRequirement[]>({
@@ -234,6 +239,42 @@ export default function AdminPage() {
       setSuccess(`${type} removed`);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : "Failed to delete record.");
+    }
+  };
+
+  const handleBulkUploadChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      await mutation.mutateAsync(async () => {
+        const { inserted, total } = await api.bulkUploadStudents(file);
+        setSuccess(`Bulk student upload complete (${inserted} of ${total} rows added).`);
+      });
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "Failed to upload students.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleSummaryExport = async () => {
+    try {
+      setIsDownloadingSummary(true);
+      const blob = await api.downloadSummary();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `gpta-summary-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setSuccess("Summary exported.");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "Failed to export summary.");
+    } finally {
+      setIsDownloadingSummary(false);
     }
   };
 
@@ -400,11 +441,23 @@ export default function AdminPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle>Status List</CardTitle>
-            <CardDescription>Filter: {statusFilter.replace("_", " ")}</CardDescription>
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>Status List</CardTitle>
+              <CardDescription>Filter: {statusFilter.replace("_", " ")}</CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="px-3 py-1 text-sm"
+              onClick={handleSummaryExport}
+              loading={isDownloadingSummary}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export Summary
+            </Button>
           </CardHeader>
-          <CardContent className="space-y-3 overflow-y-auto">
+          <CardContent className="space-y-3 max-h-[24rem] overflow-y-auto pr-2">
             {(statusesQuery.data ?? []).map((status) => (
               <div
                 key={status.studentId}
@@ -455,23 +508,49 @@ export default function AdminPage() {
       {activeTab === "students" && (
         <section className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <CardTitle>Students</CardTitle>
                 <CardDescription>Adding names, LRNs, and etc</CardDescription>
               </div>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setEditingStudent(null);
-                  studentForm.reset(studentDefaults);
-                }}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                New
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  placeholder="Search name or LRN"
+                  value={studentSearch}
+                  onChange={(event) => setStudentSearch(event.target.value)}
+                  className="sm:w-48"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Bulk upload students from Excel"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Bulk Upload
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setEditingStudent(null);
+                      studentForm.reset(studentDefaults);
+                    }}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    New
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={handleBulkUploadChange}
+            />
+            <CardContent className="space-y-4 max-h-[30rem] overflow-y-auto pr-2">
               {(studentsQuery.data ?? []).map((student) => (
                 <div
                   key={student.id}
@@ -559,7 +638,7 @@ export default function AdminPage() {
                 New
               </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 max-h-[30rem] overflow-y-auto pr-2">
               {(requirementsQuery.data ?? []).map((req) => (
                 <div
                   key={req.id}
@@ -637,7 +716,7 @@ export default function AdminPage() {
                 New
               </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 max-h-[30rem] overflow-y-auto pr-2">
               {(paymentsQuery.data ?? []).map((payment) => (
                 <div
                   key={payment.id}

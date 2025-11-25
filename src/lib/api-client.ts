@@ -12,13 +12,22 @@ import type {
   StudentPayload,
 } from "@/lib/validators";
 
+const isFormDataBody = (body: RequestInit["body"]): body is FormData => {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+};
+
 async function request<TResponse>(input: RequestInfo, init?: RequestInit) {
+  const headers =
+    init?.body && isFormDataBody(init.body)
+      ? init?.headers
+      : {
+          "Content-Type": "application/json",
+          ...(init?.headers || {}),
+        };
+
   const response = await fetch(input, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -94,5 +103,27 @@ export const api = {
     ).then((res) => res.statuses),
   getDashboard: () =>
     request<{ metrics: DashboardMetrics }>("/api/dashboard").then((res) => res.metrics),
+  bulkUploadStudents: (file: Blob) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<{ inserted: number; total: number }>("/api/students/bulk", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  downloadSummary: () =>
+    fetch("/api/summary/export").then(async (res) => {
+      if (!res.ok) {
+        let message = "Failed to generate summary.";
+        try {
+          const body = await res.json();
+          message = body.message ?? message;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      return res.blob();
+    }),
 };
 

@@ -141,6 +141,28 @@ export async function createStudent(payload: StudentPayload) {
   return mapStudent(data);
 }
 
+export async function bulkCreateStudents(payloads: StudentPayload[]) {
+  if (!payloads.length) return [];
+
+  const client = getAdminClient();
+  const records = payloads.map((payload) => ({
+    student_code: payload.studentCode,
+    first_name: payload.firstName,
+    last_name: payload.lastName,
+    grade_level: payload.gradeLevel ?? null,
+    guardian_contact: payload.guardianContact ?? null,
+    status: payload.status,
+    notes: payload.notes ?? null,
+  }));
+
+  const { data, error } = await client
+    .from("students")
+    .insert(records)
+    .select(studentColumns);
+  if (error) throw new Error(error.message);
+  return data.map(mapStudent);
+}
+
 export async function updateStudent(id: string, payload: Partial<StudentPayload>) {
   const client = getAdminClient();
   const { data, error } = await client

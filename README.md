@@ -106,6 +106,12 @@ All routes live under `/app/api` and rely on the Supabase service-role key.
 | `/api/status` | GET | Student status lookup by `studentCode` |
 | `/api/status/all` | GET | Admin status feed with `filter=fully_paid|lacking` |
 | `/api/dashboard` | GET | Summary metrics for cards |
+| `/api/students/bulk` | POST | Accepts an Excel file (LRN, First Name, Last Name, Grade Level) and bulk-creates students |
+| `/api/summary/export` | GET | Streams an Excel summary of all students with totals/ balances |
+
+#### Bulk student template
+
+Bulk uploads expect an `.xlsx` sheet with columns named **LRN**, **First Name**, **Last Name**, and **Grade Level** (order does not matter). All imported students are automatically marked **active**. Any validation errors (missing LRN, duplicate codes, etc.) are surfaced in the admin UI so you can fix the row and retry.
 
 ### Tech Stack
 

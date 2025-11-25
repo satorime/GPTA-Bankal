@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -50,15 +51,34 @@ export default function StudentPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-12">
-      <div className="flex flex-col gap-3">
-        <p className="text-sm font-semibold uppercase tracking-wide text-indigo-600">
-          Student Portal
-        </p>
-        <h1 className="text-3xl font-semibold text-slate-900">Track your payments</h1>
-        <p className="text-slate-600">
-          Enter your LRN to view balances, requirement breakdowns, and payment history.
-        </p>
-      </div>
+      <section className="relative overflow-hidden rounded-3xl border border-lime-200 bg-gradient-to-br from-lime-50 via-white to-emerald-50 p-6 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--brand-green)]">
+              Student Portal
+            </p>
+            <h1 className="text-3xl font-semibold text-[var(--brand-green-dark)]">
+              Bankal National High School
+            </h1>
+            <p className="text-slate-700">
+              Enter your LRN to keep tabs on GPTA requirements, balances, and your most recent
+              payments.
+            </p>
+          </div>
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full bg-white/60 blur-2xl" />
+            <div className="relative flex h-28 w-28 items-center justify-center rounded-3xl border border-white/60 bg-white/80 shadow-lg">
+              <Image
+                src="/bankal-logo.png"
+                alt="Bankal National High School"
+                width={96}
+                height={96}
+                priority
+              />
+            </div>
+          </div>
+        </div>
+      </section>
 
       <form
         onSubmit={form.handleSubmit(onSubmit)}
