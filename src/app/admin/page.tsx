@@ -458,7 +458,7 @@ export default function AdminPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Students</CardTitle>
-                <CardDescription>Manage roster and codes</CardDescription>
+                <CardDescription>Adding names, LRNs, and etc</CardDescription>
               </div>
               <Button
                 variant="outline"
@@ -546,7 +546,7 @@ export default function AdminPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Payment Requirements</CardTitle>
-                <CardDescription>Define tuition, exams, and misc fees</CardDescription>
+                <CardDescription>Define GPTA contributions</CardDescription>
               </div>
               <Button
                 variant="outline"

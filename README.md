@@ -14,6 +14,42 @@ This repo now powers **two separate deployments** that share the same Supabase b
 - Deploy the repo twice (e.g., `student.paytracker.com` and `admin.paytracker.com`) with different `NEXT_PUBLIC_APP_INSTANCE` values but identical Supabase credentials to ensure both apps interact with the same database.
 - The root path (`/`) now auto-redirects to the only portal available in that deployment (student or admin). The old marketing landing page has been removed.
 
+### Desktop (Tauri) Shell
+
+If you want a desktop experience without deploying to a domain, wrap the app with Tauri:
+
+Prerequisites (Windows):
+- Rust toolchain (`winget install Rustlang.Rustup`, then `rustup default stable`).
+- Visual Studio Build Tools with “Desktop development with C++” + Windows 10 SDK.
+- Download the portable Node runtime (`node-v20.11.1-win-x64.zip`) and extract it into `src-tauri/resources/node` so the installer can ship its own Node.js binary.[^node]
+
+Commands:
+```bash
+# Student desktop shell (starts Next locally and opens a native window)
+npm run desktop:student
+
+# Admin desktop shell
+npm run desktop:admin
+```
+
+These commands launch the corresponding Next.js dev server and open a Tauri window pointed at it, so every machine can run the app locally while still talking to the shared Supabase database. (Packaging installers via `npm run desktop:student:build` / `desktop:admin:build` is possible but still experimental—the local Next server must be running for the UI to load.)
+
+#### Self-contained installers (no localhost dependency)
+
+The build scripts now bundle the production Next.js standalone output **and** the Node runtime inside Tauri. To produce installers that run with zero external commands:
+
+```bash
+# Build standalone student installer (.msi / .exe in src-tauri/target/release/bundle)
+npm run desktop:student:build
+
+# Build standalone admin installer
+npm run desktop:admin:build
+```
+
+During packaging, the scripts copy `.next/standalone`, `.next/static`, and `public/` into `src-tauri/resources/app/<portal>` and Tauri spawns the bundled Node server automatically on port `1420`. Launching the installed desktop app now “just works” on any PC with internet access—no local `npm run dev` needed—while still hitting the same Supabase cloud database.
+
+[^node]: Node.js v20.11.1 portable zip download: https://nodejs.org/dist/v20.11.1/node-v20.11.1-win-x64.zip
+
 ### Features
 
 - Student portal to view balance, payment breakdown, and payment history.
@@ -87,3 +123,26 @@ All routes live under `/app/api` and rely on the Supabase service-role key.
 4. Use `npm run build:student` / `npm run build:admin` for the respective deployments, then `npm run start` or `npm run start:admin`.
 
 The service-role key must remain server-side only; never expose it to the client.
+
+### Desktop (Tauri) installers
+
+You can also distribute the portals as native Windows apps that embed their own Node.js runtime and standalone Next.js build—no local server or browser required. Each installer still talks to the same Supabase cloud database.
+
+1. **Prerequisites (once per machine)**
+   - Rust toolchain: `winget install --id Rustlang.Rustup` → `rustup default stable`.
+   - Visual Studio 2022 Build Tools with the “Desktop development with C++” workload and Windows 10 SDK.
+2. **Provide runtime env files**  
+   Create `.env.desktop.student` / `.env.desktop.admin` (or `.env.desktop`, or fall back to `.env.local`) with all Supabase keys/secrets you want baked into the installer.
+3. **Build installers**
+   ```bash
+   npm run desktop:student:build   # outputs MSI/EXE in src-tauri/target/release/bundle
+   npm run desktop:admin:build
+   ```
+   Each command runs `next build`, bundles the standalone output plus your current Node runtime, and packages a Tauri executable that auto-starts the server on `http://127.0.0.1:1420`.
+4. **Run locally or develop**
+   ```bash
+   npm run desktop:student   # dev shell (uses next dev)
+   npm run desktop:admin
+   ```
+
+After installation, double-clicking the generated app launches the embedded Node server and UI automatically—no IDE, terminal, or localhost setup is required (other than internet access to reach Supabase).

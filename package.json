@@ -11,7 +11,12 @@
     "build:admin": "cross-env NEXT_PUBLIC_APP_INSTANCE=admin next build",
     "start": "cross-env NEXT_PUBLIC_APP_INSTANCE=student next start",
     "start:admin": "cross-env NEXT_PUBLIC_APP_INSTANCE=admin next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "tauri": "tauri",
+    "desktop:student": "cross-env NEXT_PUBLIC_APP_INSTANCE=student TAURI_TARGET=student TAURI_APP_INSTANCE=student npm run tauri -- dev",
+    "desktop:admin": "cross-env NEXT_PUBLIC_APP_INSTANCE=admin TAURI_TARGET=admin TAURI_APP_INSTANCE=admin npm run tauri -- dev",
+    "desktop:student:build": "cross-env NEXT_PUBLIC_APP_INSTANCE=student TAURI_TARGET=student TAURI_APP_INSTANCE=student npm run tauri -- build",
+    "desktop:admin:build": "cross-env NEXT_PUBLIC_APP_INSTANCE=admin TAURI_TARGET=admin TAURI_APP_INSTANCE=admin npm run tauri -- build"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -19,6 +24,7 @@
     "@tanstack/react-query": "^5.90.10",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
     "lucide-react": "^0.554.0",
     "next": "16.0.3",
     "react": "19.2.0",
@@ -31,6 +37,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tauri-apps/cli": "^2.9.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

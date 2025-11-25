@@ -56,7 +56,7 @@ export default function StudentPage() {
         </p>
         <h1 className="text-3xl font-semibold text-slate-900">Track your payments</h1>
         <p className="text-slate-600">
-          Enter your student code to view balances, requirement breakdowns, and payment history.
+          Enter your LRN to view balances, requirement breakdowns, and payment history.
         </p>
       </div>
 
@@ -65,7 +65,7 @@ export default function StudentPage() {
         className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row"
       >
         <Input
-          placeholder="e.g. STU-0001"
+          placeholder="Enter your LRN ex: 1199123456"
           {...form.register("code", { required: true })}
           className="uppercase"
         />
@@ -191,7 +191,7 @@ export default function StudentPage() {
 
       {!data && !isFetching && !isError && (
         <p className="text-sm text-slate-500">
-          Provide your student code to see your personalized dashboard.
+          Provide LRN to see your personalized dashboard.
         </p>
       )}
     </main>
