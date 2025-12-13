@@ -6,13 +6,14 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bar,
-  BarChart,
+  Line,
+  LineChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
+  Legend,
 } from "recharts";
 import { Download, Edit, Layers3, Plus, RefreshCcw, Trash2, Upload, Users, Wallet } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +31,9 @@ import type {
   StudentStatus,
 } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { BackupSyncProvider } from "@/components/backup-sync-provider";
+import { getUserFriendlyError } from "@/lib/error-messages";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 type StudentFormValues = {
   studentCode: string;
@@ -96,6 +100,12 @@ export default function AdminPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    type: "student" | "requirement" | "payment";
+    id: string;
+    itemName: string;
+  } | null>(null);
   const queryClient = useQueryClient();
 
   const studentForm = useForm<StudentFormValues>({ defaultValues: studentDefaults });
@@ -176,7 +186,7 @@ export default function AdminPage() {
       setEditingStudent(null);
       studentForm.reset(studentDefaults);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to save student.");
+      setErrorText(getUserFriendlyError(error));
     }
   });
 
@@ -200,7 +210,7 @@ export default function AdminPage() {
       setEditingRequirement(null);
       requirementForm.reset(requirementDefaults);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to save requirement.");
+      setErrorText(getUserFriendlyError(error));
     }
   });
 
@@ -225,20 +235,42 @@ export default function AdminPage() {
       setEditingPayment(null);
       paymentForm.reset(paymentDefaults);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to save payment.");
+      setErrorText(getUserFriendlyError(error));
     }
   });
 
-  const handleDelete = async (type: "student" | "requirement" | "payment", id: string) => {
+  const handleDeleteClick = (
+    type: "student" | "requirement" | "payment",
+    id: string,
+    itemName?: string
+  ) => {
+    const typeLabel = type === "student" ? "student" : type === "requirement" ? "requirement" : "payment";
+    const displayName = itemName || `this ${typeLabel}`;
+    setDeleteConfirm({
+      isOpen: true,
+      type,
+      id,
+      itemName: displayName,
+    });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return;
+    
+    const { type, id } = deleteConfirm;
+    const typeLabel = type === "student" ? "student" : type === "requirement" ? "requirement" : "payment";
+    
+    setDeleteConfirm(null);
+
     try {
       await mutation.mutateAsync(async () => {
         if (type === "student") await api.deleteStudent(id);
         if (type === "requirement") await api.deleteRequirement(id);
         if (type === "payment") await api.deletePayment(id);
       });
-      setSuccess(`${type} removed`);
+      setSuccess(`${typeLabel} removed`);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to delete record.");
+      setErrorText(getUserFriendlyError(error));
     }
   };
 
@@ -252,7 +284,7 @@ export default function AdminPage() {
         setSuccess(`Bulk student upload complete (${inserted} of ${total} rows added).`);
       });
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to upload students.");
+      setErrorText(getUserFriendlyError(error));
     } finally {
       event.target.value = "";
     }
@@ -272,7 +304,7 @@ export default function AdminPage() {
       URL.revokeObjectURL(url);
       setSuccess("Summary exported.");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to export summary.");
+      setErrorText(getUserFriendlyError(error));
     } finally {
       setIsDownloadingSummary(false);
     }
@@ -317,13 +349,53 @@ export default function AdminPage() {
     }
   }, [editingPayment, paymentForm]);
 
+  // Initialize backup sync on mount
+  useEffect(() => {
+    // Initialize backup sync
+    fetch("/api/backup/init", { method: "POST" }).catch((error) => {
+      console.error("Failed to initialize backup sync:", error);
+    });
+  }, []);
+
   const chartData = useMemo(() => {
-    return (statusesQuery.data ?? []).slice(0, 7).map((status) => ({
-      name: status.studentCode,
-      balance: status.balance,
-      paid: status.totalPaid,
-    }));
-  }, [statusesQuery.data]);
+    // Get payments and aggregate by date to show trends over time
+    const payments = paymentsQuery.data ?? [];
+    
+    // Group payments by date and calculate cumulative totals
+    const paymentsByDate = new Map<string, { date: string; daily: number; cumulative: number }>();
+    let cumulativeTotal = 0;
+    
+    // Sort payments by date (oldest first for cumulative calculation)
+    const sortedPayments = [...payments]
+      .filter((p) => p.paidOn)
+      .sort((a, b) => {
+        const dateA = a.paidOn ? new Date(a.paidOn).getTime() : 0;
+        const dateB = b.paidOn ? new Date(b.paidOn).getTime() : 0;
+        return dateA - dateB;
+      });
+    
+    sortedPayments.forEach((payment) => {
+      if (!payment.paidOn) return;
+      const date = payment.paidOn.split("T")[0]; // Get YYYY-MM-DD format
+      const existing = paymentsByDate.get(date) || { date, daily: 0, cumulative: 0 };
+      existing.daily += payment.amountPaid;
+      cumulativeTotal += payment.amountPaid;
+      existing.cumulative = cumulativeTotal;
+      paymentsByDate.set(date, existing);
+    });
+    
+    // Convert to array and format for chart
+    const data = Array.from(paymentsByDate.values())
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(-30) // Show last 30 days
+      .map((item) => ({
+        date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        "Daily Collection": item.daily,
+        "Cumulative Total": item.cumulative,
+      }));
+    
+    return data;
+  }, [paymentsQuery.data]);
 
   const renderStatusBadge = (status: StudentStatus["paymentStatus"]) => {
     switch (status) {
@@ -339,7 +411,9 @@ export default function AdminPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-12">
+    <>
+      <BackupSyncProvider />
+      <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-4 rounded-2xl border border-lime-200 bg-white/90 p-6 shadow-sm">
         <div className="flex items-center gap-4">
           <Image src="/bankal-logo.png" width={72} height={72} alt="Bankal National High School" />
@@ -347,12 +421,11 @@ export default function AdminPage() {
             <p className="text-sm font-semibold uppercase tracking-widest text-[var(--brand-green)]">
               Admin Dashboard
             </p>
-            <h1 className="text-3xl font-semibold text-[var(--brand-green-dark)]">StudentPay Tracker</h1>
+            <h1 className="text-3xl font-semibold text-[var(--brand-green-dark)]">GPTAPayments Tracker</h1>
           </div>
         </div>
         <p className="text-slate-600">
-          Manage students, payment requirements, and payment records with a Supabase-backed API built for
-          Bankal National High School.
+          Manage students, payment requirements, and payment records for GPTA of Bankal National High School.
         </p>
       </header>
 
@@ -411,8 +484,8 @@ export default function AdminPage() {
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle>Balances Snapshot</CardTitle>
-              <CardDescription>Top students by outstanding balance</CardDescription>
+              <CardTitle>Payment Trends</CardTitle>
+              <CardDescription>Payment collection trends over time</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {(["all", "fully_paid", "lacking"] as const).map((filter) => (
@@ -429,14 +502,46 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="balance" fill="#f6d251" name="Balance" />
-                <Bar dataKey="paid" fill="#5aaf22" name="Paid" />
-              </BarChart>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis 
+                  dataKey="date" 
+                  stroke="#64748b"
+                  style={{ fontSize: "12px" }}
+                />
+                <YAxis 
+                  stroke="#64748b"
+                  style={{ fontSize: "12px" }}
+                  tickFormatter={(value) => `₱${value.toLocaleString()}`}
+                />
+                <Tooltip 
+                  contentStyle={{
+                    backgroundColor: "white",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                  }}
+                  formatter={(value: number) => `₱${value.toLocaleString()}`}
+                />
+                <Legend />
+                <Line 
+                  type="monotone" 
+                  dataKey="Daily Collection" 
+                  stroke="#5aaf22" 
+                  strokeWidth={2}
+                  dot={{ fill: "#5aaf22", r: 4 }}
+                  activeDot={{ r: 6 }}
+                  name="Daily Collection"
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="Cumulative Total" 
+                  stroke="#f6d251" 
+                  strokeWidth={2}
+                  dot={{ fill: "#f6d251", r: 4 }}
+                  activeDot={{ r: 6 }}
+                  name="Cumulative Total"
+                />
+              </LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -528,7 +633,7 @@ export default function AdminPage() {
                     title="Bulk upload students from Excel"
                   >
                     <Upload className="mr-2 h-4 w-4" />
-                    Bulk Upload
+                    Bulk
                   </Button>
                   <Button
                     variant="outline"
@@ -538,7 +643,7 @@ export default function AdminPage() {
                     }}
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    New
+                    Enroll
                   </Button>
                 </div>
               </div>
@@ -575,7 +680,7 @@ export default function AdminPage() {
                       <Button
                         type="button"
                         variant="ghost"
-                        onClick={() => handleDelete("student", student.id)}
+                        onClick={() => handleDeleteClick("student", student.id, `${student.firstName} ${student.lastName} (${student.studentCode})`)}
                         title="Delete"
                       >
                         <Trash2 className="h-4 w-4 text-rose-600" />
@@ -655,7 +760,7 @@ export default function AdminPage() {
                       <Button variant="ghost" onClick={() => setEditingRequirement(req)}>
                         <Edit className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" onClick={() => handleDelete("requirement", req.id)}>
+                      <Button variant="ghost" onClick={() => handleDeleteClick("requirement", req.id, `"${req.label}"`)}>
                         <Trash2 className="h-4 w-4 text-rose-600" />
                       </Button>
                     </div>
@@ -733,7 +838,7 @@ export default function AdminPage() {
                       <Button variant="ghost" onClick={() => setEditingPayment(payment)}>
                         <Edit className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" onClick={() => handleDelete("payment", payment.id)}>
+                      <Button variant="ghost" onClick={() => handleDeleteClick("payment", payment.id, `payment of ${formatCurrency(payment.amountPaid)}`)}>
                         <Trash2 className="h-4 w-4 text-rose-600" />
                       </Button>
                     </div>
@@ -783,7 +888,18 @@ export default function AdminPage() {
           </Card>
         </section>
       )}
-    </main>
+      </main>
+      <ConfirmDialog
+        isOpen={deleteConfirm?.isOpen ?? false}
+        title="Confirm Deletion"
+        message={`Are you sure you want to delete ${deleteConfirm?.itemName}? This action cannot be undone.`}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteConfirm(null)}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+      />
+    </>
   );
 }
 

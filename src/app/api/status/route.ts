@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   try {
     const studentCode = request.nextUrl.searchParams.get("studentCode");
     if (!studentCode) {
-      throw new Error("studentCode is required");
+      throw new Error("Please provide a student code (LRN) to look up.");
     }
     const status = await fetchStudentStatusByCode(studentCode);
     return jsonResponse({ status });

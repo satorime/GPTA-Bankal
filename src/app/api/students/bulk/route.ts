@@ -69,7 +69,8 @@ export async function POST(request: Request) {
         try {
           return studentSchema.parse(mapped);
         } catch (error) {
-          throw new Error(`Row ${index + 2} failed validation: ${(error as Error).message}`);
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          throw new Error(`Row ${index + 2} has invalid data: ${errorMsg}. Please check the student code (LRN), first name, and last name.`);
         }
       })
       .filter(Boolean);

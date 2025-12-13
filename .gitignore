@@ -44,3 +44,6 @@ next-env.d.ts
 # tauri bundled assets
 src-tauri/resources/node/**
 src-tauri/resources/app/**
+
+# backup files
+/backups

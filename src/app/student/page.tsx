@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
 import type { StudentStatusDetail } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { getUserFriendlyError } from "@/lib/error-messages";
 
 type FormValues = {
   code: string;
@@ -50,32 +51,40 @@ export default function StudentPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
       <section className="relative overflow-hidden rounded-3xl border border-lime-200 bg-gradient-to-br from-lime-50 via-white to-emerald-50 p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--brand-green)]">
-              Student Portal
-            </p>
-            <h1 className="text-3xl font-semibold text-[var(--brand-green-dark)]">
-              Bankal National High School
-            </h1>
-            <p className="text-slate-700">
-              Enter your LRN to keep tabs on GPTA requirements, balances, and your most recent
-              payments.
-            </p>
-          </div>
-          <div className="relative">
-            <div className="absolute inset-0 rounded-full bg-white/60 blur-2xl" />
-            <div className="relative flex h-28 w-28 items-center justify-center rounded-3xl border border-white/60 bg-white/80 shadow-lg">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="relative h-20 w-20 flex-shrink-0 rounded-full bg-white shadow-md ring-1 ring-lime-200/80 sm:h-24 sm:w-24">
               <Image
                 src="/bankal-logo.png"
                 alt="Bankal National High School"
-                width={96}
-                height={96}
+                fill
+                sizes="(max-width: 640px) 80px, 96px"
+                className="object-contain p-1.5"
                 priority
               />
             </div>
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--brand-green)]">
+                Student Portal
+              </p>
+              <h1 className="text-3xl font-semibold text-[var(--brand-green-dark)] sm:text-4xl">
+                GPTAPayments Tracker
+              </h1>
+              <p className="text-sm text-slate-600 sm:text-base">
+                Bankal National High School
+              </p>
+            </div>
+          </div>
+          <div className="max-w-2xl space-y-3 text-sm text-slate-700 sm:text-base">
+            <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--brand-green)]">
+              GPTA Payments
+            </p>
+            <p>
+              Enter your LRN to keep tabs on GPTA requirements, balances, and your most recent
+              payments.
+            </p>
           </div>
         </div>
       </section>
@@ -87,9 +96,9 @@ export default function StudentPage() {
         <Input
           placeholder="Enter your LRN ex: 1199123456"
           {...form.register("code", { required: true })}
-          className="uppercase"
+          className="uppercase sm:flex-1"
         />
-        <Button type="submit" className="inline-flex items-center gap-2">
+        <Button type="submit" className="inline-flex items-center gap-2 sm:self-start">
           <Search className="h-4 w-4" /> Lookup
         </Button>
       </form>
@@ -97,7 +106,7 @@ export default function StudentPage() {
       {isError && (
         <Card className="border-rose-200 bg-rose-50">
           <CardContent className="py-6 text-sm text-rose-700">
-            {error instanceof Error ? error.message : "Unable to load student record."}
+            {getUserFriendlyError(error)}
           </CardContent>
         </Card>
       )}
@@ -116,7 +125,7 @@ export default function StudentPage() {
             </CardHeader>
           </Card>
 
-          <section className="grid gap-5 md:grid-cols-3">
+          <section className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             <Card>
               <CardHeader>
                 <CardDescription>Total Required</CardDescription>
@@ -149,8 +158,8 @@ export default function StudentPage() {
                 </div>
                 <Wallet className="h-5 w-5 text-indigo-600" />
               </CardHeader>
-              <CardContent>
-                <table className="w-full text-sm text-slate-700">
+              <CardContent className="overflow-x-auto">
+                <table className="min-w-full text-sm text-slate-700">
                   <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="pb-2">Requirement</th>
