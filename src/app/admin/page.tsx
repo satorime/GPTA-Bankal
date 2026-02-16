@@ -15,7 +15,19 @@ import {
   YAxis,
   Legend,
 } from "recharts";
-import { Download, Edit, Layers3, Plus, RefreshCcw, Trash2, Upload, Users, Wallet } from "lucide-react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Download, Edit, Layers3, Plus, RefreshCcw, Trash2, Upload, Users, Wallet, Check, ChevronsUpDown } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -855,15 +867,64 @@ export default function AdminPage() {
             </CardHeader>
             <CardContent>
               <form className="space-y-3" onSubmit={handlePaymentSubmit}>
-                <Select {...paymentForm.register("studentId", { required: true })}>
-                  <option value="">Select Student</option>
-                  {(studentsQuery.data ?? []).map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.firstName} {student.lastName} ({student.studentCode})
-                    </option>
-                  ))}
-                </Select>
-                <Select {...paymentForm.register("requirementId")}>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between"
+                  >
+                    {paymentForm.watch("studentId")
+                      ? studentsQuery.data?.find(
+                          (s) => s.id === paymentForm.watch("studentId")
+                        )?.firstName +
+                        " " +
+                        studentsQuery.data?.find(
+                          (s) => s.id === paymentForm.watch("studentId")
+                        )?.lastName +
+                        " (" +
+                        studentsQuery.data?.find(
+                          (s) => s.id === paymentForm.watch("studentId")
+                        )?.studentCode +
+                        ")"
+                      : "Select student"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+
+                <PopoverContent className="w-full p-0">
+                  <Command>
+                    <CommandInput
+                      placeholder="Search by name or LRN..."
+                    />
+                    <CommandEmpty>No student found.</CommandEmpty>
+
+                    <CommandGroup className="max-h-60 overflow-y-auto">
+                      {(studentsQuery.data ?? []).map((student) => (
+                        <CommandItem
+                          key={student.id}
+                          value={`${student.firstName} ${student.lastName} ${student.studentCode}`}
+                          onSelect={() => {
+                            paymentForm.setValue("studentId", student.id, {
+                              shouldValidate: true,
+                            });
+                          }}
+                        >
+                          <Check
+                            className={`mr-2 h-4 w-4 ${
+                              paymentForm.watch("studentId") === student.id
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }`}
+                          />
+                          {student.firstName} {student.lastName} ({student.studentCode})
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+                              <Select {...paymentForm.register("requirementId")}>
                   <option value="">No specific requirement</option>
                   {(requirementsQuery.data ?? []).map((req) => (
                     <option key={req.id} value={req.id}>
