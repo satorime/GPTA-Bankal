@@ -10,8 +10,8 @@
     "electron:dev:admin": "concurrently -n vite,electron \"cross-env VITE_APP_INSTANCE=admin vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:student": "cross-env VITE_APP_INSTANCE=student vite build",
     "build:admin": "cross-env VITE_APP_INSTANCE=admin vite build",
-    "build:exe:student": "npm run build:student && electron-builder --config electron-builder.student.json",
-    "build:exe:admin": "npm run build:admin && electron-builder --config electron-builder.admin.json",
+    "build:exe:student": "npm run build:student && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.student.json",
+    "build:exe:admin": "npm run build:admin && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.admin.json",
     "preview": "vite preview",
     "lint": "eslint"
   },
