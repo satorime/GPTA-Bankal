@@ -8,6 +8,12 @@ export const studentSchema = z.object({
   guardianContact: z.string().optional().nullable(),
   status: z.enum(["active", "inactive"]).default("active"),
   notes: z.string().optional().nullable(),
+  sectionId: z.string().uuid().optional().nullable(),
+});
+
+export const sectionSchema = z.object({
+  name: z.string().min(1),
+  gradeLevel: z.string().optional().nullable(),
 });
 
 export const paymentRequirementSchema = z.object({
@@ -30,6 +36,7 @@ export const paymentSchema = z.object({
 export type StudentPayload = z.infer<typeof studentSchema>;
 export type PaymentRequirementPayload = z.infer<typeof paymentRequirementSchema>;
 export type PaymentPayload = z.infer<typeof paymentSchema>;
+export type SectionPayload = z.infer<typeof sectionSchema>;
 
 
 

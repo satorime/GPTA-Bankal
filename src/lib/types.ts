@@ -1,6 +1,7 @@
 import type {
   PaymentPayload,
   PaymentRequirementPayload,
+  SectionPayload,
   StudentPayload,
 } from "./validators";
 
@@ -17,6 +18,12 @@ export type PaymentRequirement = PaymentRequirementPayload & {
 };
 
 export type StudentPayment = PaymentPayload & {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Section = SectionPayload & {
   id: string;
   createdAt: string;
   updatedAt: string;

@@ -3,9 +3,9 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip,
 } from "recharts";
-import { AlertTriangle, Edit, KeyRound, Layers3, LogOut, Plus, RefreshCcw, Trash2, Upload, Users, Wallet } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Edit, FolderOpen, GraduationCap, KeyRound, Layers3, LogOut, Plus, RefreshCcw, Trash2, Upload, Users, Wallet } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,12 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   fetchStudents, createStudent, updateStudent, deleteStudent, bulkCreateStudents,
+  fetchSections, createSection, updateSection, deleteSection, deleteSectionWithStudents, promoteSection,
   fetchRequirements, createRequirement, updateRequirement, deleteRequirement,
   fetchPayments, createPayment, updatePayment, deletePayment,
   fetchStatusCollection, fetchDashboardMetrics,
 } from "@/lib/db";
 import type {
-  DashboardMetrics, PaymentRequirement, Student, StudentPayment, StudentStatus,
+  DashboardMetrics, PaymentRequirement, Section, Student, StudentPayment, StudentStatus,
 } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getAuthClient } from "@/lib/supabase";
@@ -30,7 +31,9 @@ type StudentFormValues = {
   studentCode: string; firstName: string; lastName: string;
   gradeLevel?: string | null; guardianContact?: string | null;
   status: "active" | "inactive"; notes?: string | null;
+  sectionId?: string | null;
 };
+type SectionFormValues = { name: string; gradeLevel?: string | null };
 type RequirementFormValues = {
   label: string; description?: string | null;
   amount: number; dueDate?: string | null; isRequired: boolean;
@@ -57,8 +60,9 @@ const today = () => {
 
 const studentDefaults: StudentFormValues = {
   studentCode: "", firstName: "", lastName: "",
-  gradeLevel: "", guardianContact: "", status: "active", notes: "",
+  gradeLevel: "", guardianContact: "", status: "active", notes: "", sectionId: "",
 };
+const sectionDefaults: SectionFormValues = { name: "", gradeLevel: "" };
 const requirementDefaults: RequirementFormValues = {
   label: "", description: "", amount: 0, dueDate: "", isRequired: true,
 };
@@ -109,10 +113,24 @@ export default function AdminPage({ session }: { session: Session }) {
   const studentForm     = useForm<StudentFormValues>({ defaultValues: studentDefaults });
   const requirementForm = useForm<RequirementFormValues>({ defaultValues: requirementDefaults });
   const paymentForm     = useForm<PaymentFormValues>({ defaultValues: getPaymentDefaults() });
+  const sectionForm     = useForm<SectionFormValues>({ defaultValues: sectionDefaults });
 
   const [editingStudent,     setEditingStudent]     = useState<Student | null>(null);
   const [editingRequirement, setEditingRequirement] = useState<PaymentRequirement | null>(null);
   const [editingPayment,     setEditingPayment]     = useState<StudentPayment | null>(null);
+  const [editingSection,     setEditingSection]     = useState<Section | null>(null);
+
+  // Section folders UI
+  const [expandedSections,   setExpandedSections]   = useState<Set<string>>(new Set());
+  const [showSectionForm,    setShowSectionForm]    = useState(false);
+  // Section-level confirms
+  const [pendingDeleteSection, setPendingDeleteSection] = useState<{ id: string; name: string; studentCount: number } | null>(null);
+  const [pendingPromote,       setPendingPromote]       = useState<{ id: string; name: string; gradeLevel: string | null } | null>(null);
+  // Assign-to-section panel (one open at a time, keyed by section id)
+  const [assignOpenFor,  setAssignOpenFor]  = useState<string | null>(null);
+  const [assignSearch,   setAssignSearch]   = useState("");
+  const [assignSelected, setAssignSelected] = useState<Set<string>>(new Set());
+  const assignComboRef = useRef<HTMLDivElement>(null);
 
   // Student combobox for Log Payment
   const [studentSearch,      setStudentSearch]      = useState("");
@@ -125,10 +143,21 @@ export default function AdminPage({ session }: { session: Session }) {
   const [showFilterList,     setShowFilterList]     = useState(false);
   const filterComboRef = useRef<HTMLDivElement>(null);
 
+  const sectionsQuery     = useQuery<Section[]>({ queryKey: ["sections"], queryFn: () => fetchSections() });
   const studentsQuery     = useQuery<Student[]>({ queryKey: ["students"],      queryFn: () => fetchStudents() });
   const requirementsQuery = useQuery<PaymentRequirement[]>({ queryKey: ["requirements"], queryFn: () => fetchRequirements() });
   const paymentsQuery     = useQuery<StudentPayment[]>({ queryKey: ["payments"],    queryFn: () => fetchPayments() });
   const dashboardQuery    = useQuery<DashboardMetrics>({ queryKey: ["dashboard"],   queryFn: () => fetchDashboardMetrics() });
+
+  // Auto-fill amount when "All Requirements" is selected
+  const watchedRequirementId = paymentForm.watch("requirementId");
+  useEffect(() => {
+    if (watchedRequirementId === "__ALL__") {
+      const total = (requirementsQuery.data ?? []).reduce((sum, r) => sum + r.amount, 0);
+      paymentForm.setValue("amountPaid", total, { shouldValidate: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedRequirementId]);
   // Filtered list for the Status List card (respects the filter buttons)
   const statusesQuery     = useQuery<StudentStatus[]>({
     queryKey: ["statuses", statusFilter],
@@ -168,13 +197,17 @@ export default function AdminPage({ session }: { session: Session }) {
     );
   }, [allStatusesQuery.data, filterSearch]);
 
-  // Close both combobox dropdowns on outside click
+  // Close combobox dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (studentComboRef.current && !studentComboRef.current.contains(e.target as Node))
         setShowStudentList(false);
       if (filterComboRef.current && !filterComboRef.current.contains(e.target as Node))
         setShowFilterList(false);
+      if (assignComboRef.current && !assignComboRef.current.contains(e.target as Node)) {
+        setAssignOpenFor(null);
+        setAssignSearch("");
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -227,6 +260,7 @@ export default function AdminPage({ session }: { session: Session }) {
   }, [errorMessage]);
 
   const invalidateCore = () => {
+    queryClient.invalidateQueries({ queryKey: ["sections"] });
     queryClient.invalidateQueries({ queryKey: ["students"] });
     queryClient.invalidateQueries({ queryKey: ["requirements"] });
     queryClient.invalidateQueries({ queryKey: ["payments"] });
@@ -279,6 +313,50 @@ export default function AdminPage({ session }: { session: Session }) {
     } catch (e) { setErrorText(e instanceof Error ? e.message : "Failed to save student."); }
   });
 
+  // ── Section form ─────────────────────────────────────────────────
+  const handleSectionSubmit = sectionForm.handleSubmit(async (values) => {
+    try {
+      await mutation.mutateAsync(async () => {
+        editingSection
+          ? await updateSection(editingSection.id, values)
+          : await createSection(values);
+      });
+      setSuccess(editingSection ? "Section updated." : "Section created.");
+      setEditingSection(null);
+      setShowSectionForm(false);
+      sectionForm.reset(sectionDefaults);
+    } catch (e) { setErrorText(e instanceof Error ? e.message : "Failed to save section."); }
+  });
+
+  const handlePromoteConfirm = async () => {
+    if (!pendingPromote) return;
+    const { id, name } = pendingPromote;
+    setPendingPromote(null);
+    try {
+      await mutation.mutateAsync(() => promoteSection(id));
+      setSuccess(`"${name}" promoted to the next grade.`);
+    } catch (e) { setErrorText(e instanceof Error ? e.message : "Failed to promote section."); }
+  };
+
+  const handleDeleteSectionConfirm = async (withStudents: boolean) => {
+    if (!pendingDeleteSection) return;
+    const { id, name } = pendingDeleteSection;
+    setPendingDeleteSection(null);
+    try {
+      await mutation.mutateAsync(async () => {
+        withStudents ? await deleteSectionWithStudents(id) : await deleteSection(id);
+      });
+      setSuccess(withStudents ? `"${name}" and all its students deleted.` : `"${name}" removed (students kept).`);
+    } catch (e) { setErrorText(e instanceof Error ? e.message : "Failed to delete section."); }
+  };
+
+  const toggleSection = (id: string) =>
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   // ── Requirement form ────────────────────────────────────────────
   const handleRequirementSubmit = requirementForm.handleSubmit(async (values) => {
     try {
@@ -301,18 +379,36 @@ export default function AdminPage({ session }: { session: Session }) {
   // ── Payment form ────────────────────────────────────────────────
   const handlePaymentSubmit = paymentForm.handleSubmit(async (values) => {
     try {
-      const payload = {
-        ...values, amountPaid: Number(values.amountPaid),
-        requirementId: values.requirementId || null,
-        paidOn: values.paidOn || null,
-        method: values.method || null,
-        remarks: values.remarks || null,
-      };
+      const isAllRequirements = values.requirementId === "__ALL__";
+
       await mutation.mutateAsync(async () => {
-        editingPayment ? await updatePayment(editingPayment.id, payload)
-                       : await createPayment(payload);
+        if (isAllRequirements && !editingPayment) {
+          // Create one payment record per requirement
+          const reqs = requirementsQuery.data ?? [];
+          for (const req of reqs) {
+            await createPayment({
+              studentId: values.studentId,
+              requirementId: req.id,
+              amountPaid: req.amount,
+              paidOn: values.paidOn || null,
+              method: values.method || null,
+              remarks: values.remarks || null,
+            });
+          }
+        } else {
+          const payload = {
+            ...values, amountPaid: Number(values.amountPaid),
+            requirementId: values.requirementId || null,
+            paidOn: values.paidOn || null,
+            method: values.method || null,
+            remarks: values.remarks || null,
+          };
+          editingPayment ? await updatePayment(editingPayment.id, payload)
+                         : await createPayment(payload);
+        }
       });
-      setSuccess(editingPayment ? "Payment updated." : "Payment recorded.");
+
+      setSuccess(editingPayment ? "Payment updated." : isAllRequirements ? "All requirements recorded." : "Payment recorded.");
       setEditingPayment(null);
       paymentForm.reset(getPaymentDefaults());
       setStudentSearch("");
@@ -348,6 +444,7 @@ export default function AdminPage({ session }: { session: Session }) {
         guardianContact: editingStudent.guardianContact ?? "",
         status: editingStudent.status as "active" | "inactive",
         notes: editingStudent.notes ?? "",
+        sectionId: editingStudent.sectionId ?? "",
       });
       formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -383,14 +480,18 @@ export default function AdminPage({ session }: { session: Session }) {
     }
   }, [editingPayment, paymentForm]);
 
-  // Chart always shows top 8 by balance across ALL students — independent of the list filter
-  const chartData = useMemo(() =>
-    (allStatusesQuery.data ?? [])
-      .slice()
-      .sort((a, b) => b.balance - a.balance)
-      .slice(0, 8)
-      .map((s) => ({ name: s.studentCode, balance: s.balance, paid: s.totalPaid })),
-    [allStatusesQuery.data]);
+  // Donut chart: payment status distribution across all students
+  const chartData = useMemo(() => {
+    const all = allStatusesQuery.data ?? [];
+    const counts = { fully_paid: 0, partial: 0, unpaid: 0, no_requirements: 0 };
+    all.forEach(s => { counts[s.paymentStatus] = (counts[s.paymentStatus] ?? 0) + 1; });
+    return [
+      { name: "Fully Paid",       value: counts.fully_paid,       fill: "var(--brand-green)" },
+      { name: "Partial",          value: counts.partial,          fill: "var(--brand-gold)" },
+      { name: "Unpaid",           value: counts.unpaid,           fill: "#f87171" },
+      { name: "No Requirements",  value: counts.no_requirements,  fill: "var(--muted)" },
+    ].filter(d => d.value > 0);
+  }, [allStatusesQuery.data]);
 
   const renderStatusBadge = (status: StudentStatus["paymentStatus"]) => {
     switch (status) {
@@ -546,51 +647,81 @@ export default function AdminPage({ session }: { session: Session }) {
       {/* Chart + Status list */}
       <section className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+          <CardHeader>
+            <CardTitle>Payment Status Overview</CardTitle>
+            <CardDescription>
+              Distribution across {allStatusesQuery.data?.length ?? 0} students
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-72">
+            {chartData.length === 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-[var(--muted)]">No student data yet.</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={chartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="50%"
+                    outerRadius="75%"
+                    paddingAngle={3}
+                    dataKey="value"
+                    label={({ name, percent }) =>
+                      percent > 0.04 ? `${Math.round(percent * 100)}%` : ""
+                    }
+                    labelLine={false}
+                  >
+                    {chartData.map((entry, i) => (
+                      <Cell key={i} fill={entry.fill} stroke="none" />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--background)",
+                      border: "none",
+                      boxShadow: "var(--shadow-nm)",
+                      borderRadius: 12,
+                      fontSize: 13,
+                    }}
+                    formatter={(value: number, name: string) => [
+                      `${value} student${value !== 1 ? "s" : ""}`,
+                      name,
+                    ]}
+                  />
+                  <Legend
+                    iconType="circle"
+                    iconSize={10}
+                    formatter={(value) => (
+                      <span style={{ fontSize: 12, color: "var(--foreground)" }}>{value}</span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
-              <CardTitle>Balances Snapshot</CardTitle>
-              <CardDescription>
-                Top {chartData.length} students by balance
-              </CardDescription>
+              <CardTitle>Status List</CardTitle>
+              <CardDescription>Filter: {statusFilter === "all" ? "All" : statusFilter === "fully_paid" ? "Fully Paid" : "Lacking"}</CardDescription>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-row gap-1.5 shrink-0 flex-wrap justify-end">
               {(["all", "fully_paid", "lacking"] as const).map((filter) => (
                 <Button
                   key={filter}
                   variant={statusFilter === filter ? "default" : "outline"}
                   onClick={() => setStatusFilter(filter)}
-                  className="text-xs px-3 py-1.5"
+                  className="text-xs px-3 py-1"
                 >
                   {filter === "all" ? "All" : filter === "fully_paid" ? "Fully Paid" : "Lacking"}
                 </Button>
               ))}
             </div>
-          </CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(90,175,34,0.15)" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--background)",
-                    border: "none",
-                    boxShadow: "var(--shadow-nm)",
-                    borderRadius: 12,
-                  }}
-                />
-                <Bar dataKey="balance" fill="var(--brand-gold)"  name="Balance" radius={[4,4,0,0]} />
-                <Bar dataKey="paid"    fill="var(--brand-green)" name="Paid"    radius={[4,4,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Status List</CardTitle>
-            <CardDescription>Filter: {statusFilter.replace("_", " ")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 max-h-72 overflow-y-auto pr-1 scroll-hidden">
             {(statusesQuery.data ?? []).length === 0 && (
@@ -612,6 +743,189 @@ export default function AdminPage({ session }: { session: Session }) {
           </CardContent>
         </Card>
       </section>
+
+      {/* Assign students to section — modal */}
+      {assignOpenFor && (() => {
+        const section = (sectionsQuery.data ?? []).find(s => s.id === assignOpenFor);
+        if (!section) return null;
+
+        // Only show ungrouped students whose grade matches the section (or either has no grade set)
+        const ungrouped = (studentsQuery.data ?? []).filter(s => {
+          if (s.sectionId) return false; // already grouped
+          if (section.gradeLevel && s.gradeLevel && s.gradeLevel !== section.gradeLevel) return false;
+          return true;
+        });
+
+        const q = assignSearch.toLowerCase();
+        const filtered = ungrouped.filter(s =>
+          `${s.firstName} ${s.lastName}`.toLowerCase().includes(q) ||
+          s.studentCode.toLowerCase().includes(q)
+        );
+        const allChecked = filtered.length > 0 && filtered.every(s => assignSelected.has(s.id));
+
+        const toggle = (id: string) =>
+          setAssignSelected(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+          });
+
+        const toggleAll = () =>
+          setAssignSelected(prev => {
+            const next = new Set(prev);
+            allChecked
+              ? filtered.forEach(s => next.delete(s.id))
+              : filtered.forEach(s => next.add(s.id));
+            return next;
+          });
+
+        const handleAssign = async () => {
+          const ids = [...assignSelected];
+          await Promise.all(ids.map(id => updateStudent(id, { sectionId: section.id })));
+          queryClient.invalidateQueries({ queryKey: ["students"] });
+          setAssignOpenFor(null);
+          setAssignSearch("");
+          setAssignSelected(new Set());
+          setExpandedSections(prev => new Set(prev).add(section.id));
+          setSuccess(`${ids.length} student${ids.length !== 1 ? "s" : ""} added to ${section.name}.`);
+        };
+
+        const close = () => {
+          setAssignOpenFor(null);
+          setAssignSearch("");
+          setAssignSelected(new Set());
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={close}>
+            <div className="nm-card w-full max-w-md flex flex-col gap-4 p-6" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div>
+                <h2 className="text-base font-bold text-[var(--foreground)]">
+                  Assign Students — {section.name}
+                </h2>
+                <p className="text-xs text-[var(--muted)] mt-0.5">
+                  {section.gradeLevel
+                    ? `Showing Grade ${section.gradeLevel} ungrouped students only.`
+                    : "Showing all ungrouped students."}
+                </p>
+              </div>
+
+              {/* Search */}
+              <Input
+                placeholder="Search by name or LRN…"
+                value={assignSearch}
+                onChange={e => { setAssignSearch(e.target.value); setAssignSelected(new Set()); }}
+                autoFocus
+              />
+
+              {/* List */}
+              {ungrouped.length === 0 ? (
+                <p className="text-sm text-[var(--muted)] text-center py-4">
+                  {section.gradeLevel
+                    ? `No ungrouped Grade ${section.gradeLevel} students available.`
+                    : "No ungrouped students available."}
+                </p>
+              ) : filtered.length === 0 ? (
+                <p className="text-sm text-[var(--muted)] text-center py-4">No matches found.</p>
+              ) : (
+                <div className="nm-inset rounded-xl overflow-hidden">
+                  {/* Select all */}
+                  <label className="flex items-center gap-3 px-4 py-2.5 text-xs font-semibold border-b border-[var(--border)] cursor-pointer select-none hover:bg-[var(--brand-green-light)] transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={toggleAll}
+                      className="accent-[var(--brand-green)] h-4 w-4"
+                    />
+                    Select all ({filtered.length})
+                  </label>
+                  <div className="max-h-64 overflow-y-auto scroll-hidden">
+                    {filtered.map(s => (
+                      <label
+                        key={s.id}
+                        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer select-none hover:bg-[var(--brand-green-light)] transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={assignSelected.has(s.id)}
+                          onChange={() => toggle(s.id)}
+                          className="accent-[var(--brand-green)] h-4 w-4 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{s.firstName} {s.lastName}</p>
+                          <p className="text-xs text-[var(--muted)]">
+                            {s.studentCode}{s.gradeLevel ? ` · Grade ${s.gradeLevel}` : ""}
+                          </p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={close}>Cancel</Button>
+                <Button
+                  className="flex-1"
+                  disabled={assignSelected.size === 0}
+                  loading={mutation.isPending}
+                  onClick={handleAssign}
+                >
+                  Add {assignSelected.size > 0 ? assignSelected.size : ""} Student{assignSelected.size !== 1 ? "s" : ""}
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Promote section confirmation */}
+      {pendingPromote && (
+        <div className="nm-card border-l-4 border-[var(--brand-green)] p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-5 w-5 text-[var(--brand-green)] shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-[var(--foreground)]">
+                Promote <span className="font-bold">{pendingPromote.name}</span>?
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {pendingPromote.gradeLevel === "12"
+                  ? "Grade 12 students will be marked inactive (graduated)."
+                  : pendingPromote.gradeLevel
+                  ? `All students will move from Grade ${pendingPromote.gradeLevel} → Grade ${({ "7":"8","8":"9","9":"10","10":"11","11":"12" } as Record<string,string>)[pendingPromote.gradeLevel] ?? "?"}.`
+                  : "All students' grade levels will be advanced one step."}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="outline" onClick={() => setPendingPromote(null)}>Cancel</Button>
+            <Button onClick={handlePromoteConfirm} loading={mutation.isPending}>Promote</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete section confirmation */}
+      {pendingDeleteSection && (
+        <div className="nm-card border-l-4 border-rose-400 p-5 flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-rose-500 shrink-0" />
+            <p className="text-sm font-medium text-rose-700">
+              Delete section <span className="font-bold">{pendingDeleteSection.name}</span>?
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="outline" className="flex-1" onClick={() => handleDeleteSectionConfirm(false)}>
+              Remove section only — keep {pendingDeleteSection.studentCount} students (ungrouped)
+            </Button>
+            <Button variant="destructive" className="flex-1" loading={mutation.isPending} onClick={() => handleDeleteSectionConfirm(true)}>
+              Delete section + all {pendingDeleteSection.studentCount} students
+            </Button>
+            <Button variant="outline" onClick={() => setPendingDeleteSection(null)}>Cancel</Button>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation */}
       {pendingDelete && (
@@ -666,56 +980,217 @@ export default function AdminPage({ session }: { session: Session }) {
       {/* ── Students tab ───────────────────────────────────────── */}
       {activeTab === "students" && (
         <section className="grid gap-6 lg:grid-cols-2">
+          {/* ── Left: section folders + student roster ── */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Students</CardTitle>
-                <CardDescription>Manage roster and codes</CardDescription>
+                <CardDescription>Grouped by section</CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" onClick={() => setShowBulkImport(true)}>
                   <Upload className="mr-2 h-4 w-4" /> Import
                 </Button>
+                <Button variant="outline" onClick={() => {
+                  setEditingSection(null);
+                  sectionForm.reset(sectionDefaults);
+                  setShowSectionForm(v => !v);
+                }}>
+                  <FolderOpen className="mr-2 h-4 w-4" /> Section
+                </Button>
                 <Button variant="outline" onClick={() => { setEditingStudent(null); studentForm.reset(studentDefaults); }}>
-                  <Plus className="mr-2 h-4 w-4" /> New
+                  <Plus className="mr-2 h-4 w-4" /> Student
                 </Button>
               </div>
             </CardHeader>
-            <CardContent ref={listRefs[0]} className="space-y-3 max-h-[420px] overflow-y-auto scroll-hidden">
-              {(studentsQuery.data ?? []).length === 0 && (
-                <p className="text-sm text-[var(--muted)]">No students yet. Add one using the form.</p>
-              )}
-              {(studentsQuery.data ?? []).map((student) => (
-                <div key={student.id} className="nm-pill px-4 py-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-[var(--foreground)]">
-                        {student.firstName} {student.lastName}
-                      </p>
-                      <p className="text-xs uppercase text-[var(--muted)]">{student.studentCode}</p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" onClick={() => setEditingStudent(student)} title="Edit student">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        title="Delete student"
-                        onClick={() => requestDelete("student", student.id,
-                          `${student.firstName} ${student.lastName}`)}
-                      >
-                        <Trash2 className="h-4 w-4 text-rose-500" />
-                      </Button>
-                    </div>
+
+            {/* Inline section create/edit form */}
+            {showSectionForm && (
+              <div className="px-6 pb-4 border-b border-[var(--border)]">
+                <form className="flex flex-wrap items-end gap-3" onSubmit={handleSectionSubmit}>
+                  <Field label="Section Name *" error={sectionForm.formState.errors.name?.message}>
+                    <Input
+                      placeholder="e.g. 7-Sampaguita"
+                      {...sectionForm.register("name", { required: "Name is required" })}
+                    />
+                  </Field>
+                  <Field label="Grade Level">
+                    <Select {...sectionForm.register("gradeLevel")}>
+                      <option value="">— Select —</option>
+                      {GRADE_LEVELS.map(g => <option key={g} value={g}>Grade {g}</option>)}
+                    </Select>
+                  </Field>
+                  <div className="flex gap-2 pb-[1px]">
+                    <Button type="submit" loading={mutation.isPending}>
+                      {editingSection ? "Update" : "Create"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => {
+                      setShowSectionForm(false); setEditingSection(null); sectionForm.reset(sectionDefaults);
+                    }}>Cancel</Button>
                   </div>
-                  <p className="text-xs text-[var(--muted)]">
-                    Grade {student.gradeLevel ?? "N/A"} · {student.status}
-                  </p>
-                </div>
-              ))}
+                </form>
+              </div>
+            )}
+
+            <CardContent ref={listRefs[0]} className="space-y-3 max-h-[520px] overflow-y-auto scroll-hidden pt-4">
+              {(sectionsQuery.data ?? []).length === 0 && (studentsQuery.data ?? []).length === 0 && (
+                <p className="text-sm text-[var(--muted)]">No sections yet. Create one using the Section button.</p>
+              )}
+
+              {/* Section folders */}
+              {(sectionsQuery.data ?? []).map((section) => {
+                const sectionStudents = (studentsQuery.data ?? []).filter(s => s.sectionId === section.id);
+                const isExpanded = expandedSections.has(section.id);
+                return (
+                  <div key={section.id} className="nm-card overflow-hidden">
+                    {/* Section header row */}
+                    <div
+                      className="flex items-center justify-between px-4 py-3 cursor-pointer select-none"
+                      onClick={() => toggleSection(section.id)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {isExpanded
+                          ? <ChevronDown className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                          : <ChevronRight className="h-4 w-4 shrink-0 text-[var(--muted)]" />}
+                        <FolderOpen className="h-4 w-4 shrink-0 text-[var(--brand-green)]" />
+                        <span className="font-semibold text-sm truncate">{section.name}</span>
+                        {section.gradeLevel && (
+                          <Badge variant="default" className="text-xs">Grade {section.gradeLevel}</Badge>
+                        )}
+                        <span className="text-xs text-[var(--muted)] shrink-0">{sectionStudents.length} students</span>
+                      </div>
+                      <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
+                        <Button variant="ghost" title="Edit section" onClick={() => {
+                          setEditingSection(section);
+                          sectionForm.reset({ name: section.name, gradeLevel: section.gradeLevel ?? "" });
+                          setShowSectionForm(true);
+                        }}>
+                          <Edit className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" title="Promote section one grade" onClick={() =>
+                          setPendingPromote({ id: section.id, name: section.name, gradeLevel: section.gradeLevel ?? null })
+                        }>
+                          <GraduationCap className="h-3.5 w-3.5 text-[var(--brand-green)]" />
+                        </Button>
+                        <Button variant="ghost" title="Delete section" onClick={() =>
+                          setPendingDeleteSection({ id: section.id, name: section.name, studentCount: sectionStudents.length })
+                        }>
+                          <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Assign students — opens modal */}
+                    {isExpanded && (
+                      <div className="border-t border-[var(--border)]">
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-2 px-4 py-2 text-xs text-[var(--brand-green)] hover:opacity-80 transition-opacity"
+                          onClick={() => {
+                            setAssignOpenFor(section.id);
+                            setAssignSearch("");
+                            setAssignSelected(new Set());
+                          }}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Assign students to this section
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Students in section */}
+                    {isExpanded && (
+                      <div className="px-4 pb-3 space-y-2 border-t border-[var(--border)]">
+                        {sectionStudents.length === 0
+                          ? <p className="text-xs text-[var(--muted)] pt-2">No students in this section yet.</p>
+                          : sectionStudents.map(student => (
+                            <div key={student.id} className="nm-pill px-4 py-2.5 text-sm">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-semibold text-[var(--foreground)]">
+                                    {student.firstName} {student.lastName}
+                                  </p>
+                                  <p className="text-xs uppercase text-[var(--muted)]">{student.studentCode} · Grade {student.gradeLevel ?? "N/A"} · {student.status}</p>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Button variant="ghost" onClick={() => setEditingStudent(student)} title="Edit">
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    title="Remove from section (keep student)"
+                                    onClick={async () => {
+                                      await updateStudent(student.id, { sectionId: null });
+                                      queryClient.invalidateQueries({ queryKey: ["students"] });
+                                    }}
+                                  >
+                                    <FolderOpen className="h-4 w-4 text-amber-500" />
+                                  </Button>
+                                  <Button variant="ghost" title="Delete student" onClick={() =>
+                                    requestDelete("student", student.id, `${student.firstName} ${student.lastName}`)}>
+                                    <Trash2 className="h-4 w-4 text-rose-500" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        }
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Ungrouped students */}
+              {(() => {
+                const ungrouped = (studentsQuery.data ?? []).filter(s => !s.sectionId);
+                if (ungrouped.length === 0) return null;
+                const isExpanded = expandedSections.has("__ungrouped__");
+                return (
+                  <div className="nm-card overflow-hidden">
+                    <div
+                      className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none"
+                      onClick={() => toggleSection("__ungrouped__")}
+                    >
+                      {isExpanded
+                        ? <ChevronDown className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                        : <ChevronRight className="h-4 w-4 shrink-0 text-[var(--muted)]" />}
+                      <FolderOpen className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                      <span className="font-semibold text-sm text-[var(--muted)]">Ungrouped</span>
+                      <span className="text-xs text-[var(--muted)]">{ungrouped.length} students</span>
+                    </div>
+                    {isExpanded && (
+                      <div className="px-4 pb-3 space-y-2 border-t border-[var(--border)]">
+                        {ungrouped.map(student => (
+                          <div key={student.id} className="nm-pill px-4 py-2.5 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-semibold text-[var(--foreground)]">
+                                  {student.firstName} {student.lastName}
+                                </p>
+                                <p className="text-xs uppercase text-[var(--muted)]">{student.studentCode} · Grade {student.gradeLevel ?? "N/A"} · {student.status}</p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button variant="ghost" onClick={() => setEditingStudent(student)} title="Edit">
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" title="Delete" onClick={() =>
+                                  requestDelete("student", student.id, `${student.firstName} ${student.lastName}`)}>
+                                  <Trash2 className="h-4 w-4 text-rose-500" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
 
+          {/* ── Right: add/edit student form ── */}
           <div ref={formRef}>
             <Card>
               <CardHeader>
@@ -739,6 +1214,14 @@ export default function AdminPage({ session }: { session: Session }) {
                       <Input {...studentForm.register("lastName", { required: "Last name is required" })} />
                     </Field>
                   </div>
+                  <Field label="Section">
+                    <Select {...studentForm.register("sectionId")}>
+                      <option value="">— No section —</option>
+                      {(sectionsQuery.data ?? []).map(sec => (
+                        <option key={sec.id} value={sec.id}>{sec.name}{sec.gradeLevel ? ` (Grade ${sec.gradeLevel})` : ""}</option>
+                      ))}
+                    </Select>
+                  </Field>
                   <Field label="Grade Level">
                     <Select {...studentForm.register("gradeLevel")}>
                       <option value="">— Select grade —</option>
@@ -1026,8 +1509,13 @@ export default function AdminPage({ session }: { session: Session }) {
                     </div>
                   </Field>
                   <Field label="Requirement">
-                    <Select {...paymentForm.register("requirementId")}>
+                    <Select {...paymentForm.register("requirementId")} disabled={!!editingPayment}>
                       <option value="">No specific requirement</option>
+                      {(requirementsQuery.data ?? []).length > 0 && (
+                        <option value="__ALL__">
+                          — All Requirements (₱{(requirementsQuery.data ?? []).reduce((s, r) => s + r.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })})
+                        </option>
+                      )}
                       {(requirementsQuery.data ?? []).map((req) => (
                         <option key={req.id} value={req.id}>{req.label}</option>
                       ))}
@@ -1039,6 +1527,8 @@ export default function AdminPage({ session }: { session: Session }) {
                       step="0.01"
                       min="0.01"
                       placeholder="0.00"
+                      readOnly={watchedRequirementId === "__ALL__"}
+                      className={watchedRequirementId === "__ALL__" ? "opacity-60 cursor-not-allowed" : ""}
                       {...paymentForm.register("amountPaid", {
                         valueAsNumber: true,
                         required: "Amount is required",

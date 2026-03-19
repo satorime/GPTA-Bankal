@@ -3,6 +3,7 @@ import type {
   DashboardMetrics,
   PaymentRequirement,
   RequirementBreakdown,
+  Section,
   Student,
   StudentPayment,
   StudentStatus,
@@ -11,6 +12,7 @@ import type {
 import type {
   PaymentPayload,
   PaymentRequirementPayload,
+  SectionPayload,
   StudentPayload,
 } from "./validators";
 
@@ -25,6 +27,15 @@ type StudentRow = {
   guardian_contact: string | null;
   status: string;
   notes: string | null;
+  section_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type SectionRow = {
+  id: string;
+  name: string;
+  grade_level: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -67,7 +78,8 @@ type StatusRow = {
 const toNumber = (value: NumericLike) => Number(value ?? 0);
 
 const studentColumns =
-  "id, student_code, first_name, last_name, grade_level, guardian_contact, status, notes, created_at, updated_at";
+  "id, student_code, first_name, last_name, grade_level, guardian_contact, status, notes, section_id, created_at, updated_at";
+const sectionColumns = "id, name, grade_level, created_at, updated_at";
 const requirementColumns =
   "id, label, description, amount, due_date, is_required, created_at, updated_at";
 const paymentColumns =
@@ -82,6 +94,15 @@ const mapStudent = (row: StudentRow): Student => ({
   guardianContact: row.guardian_contact,
   status: row.status as Student["status"],
   notes: row.notes,
+  sectionId: row.section_id,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapSection = (row: SectionRow): Section => ({
+  id: row.id,
+  name: row.name,
+  gradeLevel: row.grade_level,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -134,6 +155,7 @@ export async function createStudent(payload: StudentPayload) {
       guardian_contact: payload.guardianContact,
       status: payload.status,
       notes: payload.notes,
+      section_id: payload.sectionId || null,
     })
     .select(studentColumns)
     .single();
@@ -153,6 +175,7 @@ export async function updateStudent(id: string, payload: Partial<StudentPayload>
       guardian_contact: payload.guardianContact,
       status: payload.status,
       notes: payload.notes,
+      section_id: payload.sectionId !== undefined ? (payload.sectionId || null) : undefined,
     })
     .eq("id", id)
     .select(studentColumns)
@@ -188,6 +211,95 @@ export async function bulkCreateStudents(
   if (error) throw new Error(error.message);
   const inserted = data?.length ?? 0;
   return { inserted, skipped: students.length - inserted };
+}
+
+// ── Section CRUD ─────────────────────────────────────────────────────────────
+
+export async function fetchSections() {
+  const client = getAdminClient();
+  const { data, error } = await client
+    .from("sections")
+    .select(sectionColumns)
+    .order("grade_level", { ascending: true, nullsFirst: false })
+    .order("name");
+  if (error) throw new Error(error.message);
+  return data.map(mapSection);
+}
+
+export async function createSection(payload: SectionPayload) {
+  const client = getAdminClient();
+  const { data, error } = await client
+    .from("sections")
+    .insert({ name: payload.name, grade_level: payload.gradeLevel || null })
+    .select(sectionColumns)
+    .single();
+  if (error) throw new Error(error.message);
+  return mapSection(data);
+}
+
+export async function updateSection(id: string, payload: Partial<SectionPayload>) {
+  const client = getAdminClient();
+  const { data, error } = await client
+    .from("sections")
+    .update({ name: payload.name, grade_level: payload.gradeLevel || null })
+    .eq("id", id)
+    .select(sectionColumns)
+    .single();
+  if (error) throw new Error(error.message);
+  return mapSection(data);
+}
+
+/** Deletes the section; students become ungrouped (section_id → null via FK). */
+export async function deleteSection(id: string) {
+  const client = getAdminClient();
+  const { error } = await client.from("sections").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Deletes all students in the section, then the section itself. */
+export async function deleteSectionWithStudents(id: string) {
+  const client = getAdminClient();
+  const { error: studentsErr } = await client
+    .from("students").delete().eq("section_id", id);
+  if (studentsErr) throw new Error(studentsErr.message);
+  const { error: sectionErr } = await client
+    .from("sections").delete().eq("id", id);
+  if (sectionErr) throw new Error(sectionErr.message);
+}
+
+const GRADE_PROMOTION: Record<string, string> = {
+  "7": "8", "8": "9", "9": "10", "10": "11", "11": "12",
+};
+
+/**
+ * Promotes all students in a section one grade level.
+ * Grade 12 students are marked inactive (graduated).
+ * Also bumps the section's grade_level.
+ */
+export async function promoteSection(id: string) {
+  const client = getAdminClient();
+
+  const { data: students, error: fetchErr } = await client
+    .from("students")
+    .select("id, grade_level")
+    .eq("section_id", id);
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  for (const s of students ?? []) {
+    if (s.grade_level === "12") {
+      await client.from("students").update({ status: "inactive" }).eq("id", s.id);
+    } else if (s.grade_level && GRADE_PROMOTION[s.grade_level]) {
+      await client.from("students")
+        .update({ grade_level: GRADE_PROMOTION[s.grade_level] })
+        .eq("id", s.id);
+    }
+  }
+
+  // Bump section grade_level
+  const { data: sec } = await client
+    .from("sections").select("grade_level").eq("id", id).single();
+  const nextGrade = sec?.grade_level ? (GRADE_PROMOTION[sec.grade_level] ?? sec.grade_level) : null;
+  await client.from("sections").update({ grade_level: nextGrade }).eq("id", id);
 }
 
 export async function fetchRequirements() {
