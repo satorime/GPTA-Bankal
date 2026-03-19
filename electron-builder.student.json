@@ -1,0 +1,24 @@
+{
+  "appId": "com.bankal.studentpay.student",
+  "productName": "StudentPay - Student",
+  "directories": {
+    "output": "dist-exe/student"
+  },
+  "files": [
+    "electron/**",
+    "dist/**",
+    "public/**",
+    "package.json"
+  ],
+  "asar": true,
+  "win": {
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "icon": "public/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "shortcutName": "StudentPay Student"
+  }
+}

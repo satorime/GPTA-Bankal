@@ -1,0 +1,40 @@
+services:
+  # ── Student Portal ─────────────────────────────────────────────
+  - type: web
+    name: bankal-student
+    env: static
+    buildCommand: npm run build:student
+    staticPublishPath: dist
+    routes:
+      # Rewrite all paths to index.html (single-page app)
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: VITE_DEMO_STUDENT_CODE
+        value: ""           # Optional: pre-fill the student code field
+
+  # ── Admin Portal ───────────────────────────────────────────────
+  - type: web
+    name: bankal-admin
+    env: static
+    buildCommand: npm run build:admin
+    staticPublishPath: dist
+    routes:
+      # Rewrite all paths to index.html (single-page app)
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false

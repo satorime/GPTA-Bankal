@@ -1,4 +1,4 @@
-import { getAdminClient } from "./supabase";
+import { getAdminClient, getAuthClient } from "./supabase";
 import type {
   DashboardMetrics,
   PaymentRequirement,
@@ -110,7 +110,7 @@ const mapPayment = (row: PaymentRow): StudentPayment => ({
 });
 
 export async function fetchStudents(search?: string) {
-  const client = getAdminClient();
+  const client = getAuthClient();
   let query = client.from("students").select(studentColumns).order("created_at");
   if (search) {
     query = query.or(
@@ -165,6 +165,29 @@ export async function deleteStudent(id: string) {
   const client = getAdminClient();
   const { error } = await client.from("students").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+export async function bulkCreateStudents(
+  students: StudentPayload[]
+): Promise<{ inserted: number; skipped: number }> {
+  const client = getAdminClient();
+  const rows = students.map((s) => ({
+    student_code:     s.studentCode.toUpperCase(),
+    first_name:       s.firstName,
+    last_name:        s.lastName,
+    grade_level:      s.gradeLevel      || null,
+    guardian_contact: s.guardianContact || null,
+    status:           s.status,
+    notes:            s.notes           || null,
+  }));
+  // ignoreDuplicates: true → rows whose student_code already exists are silently skipped
+  const { data, error } = await client
+    .from("students")
+    .upsert(rows, { onConflict: "student_code", ignoreDuplicates: true })
+    .select("id");
+  if (error) throw new Error(error.message);
+  const inserted = data?.length ?? 0;
+  return { inserted, skipped: students.length - inserted };
 }
 
 export async function fetchRequirements() {
@@ -222,7 +245,7 @@ export async function deleteRequirement(id: string) {
 }
 
 export async function fetchPayments(studentId?: string) {
-  const client = getAdminClient();
+  const client = getAuthClient();
   let query = client.from("student_payments").select(paymentColumns).order("paid_on", {
     ascending: false,
   });
@@ -311,13 +334,23 @@ export async function fetchStudentStatusByCode(
     .select("*")
     .eq("student_code", studentCode)
     .single();
-  if (statusError) throw new Error(statusError.message);
-  if (!statusRow) throw new Error("Student not found");
+  if (statusError) {
+    // PGRST116 = "no rows returned" — Supabase's .single() error when the code doesn't exist
+    if (statusError.code === "PGRST116") {
+      throw new Error(`LRN "${studentCode}" was not found. Please check and try again.`);
+    }
+    throw new Error(statusError.message);
+  }
+  if (!statusRow) throw new Error(`LRN "${studentCode}" was not found. Please check and try again.`);
 
-  const [requirements, studentPayments] = await Promise.all([
+  const adminClient = getAdminClient();
+  const [requirements, paymentsResult] = await Promise.all([
     fetchRequirements(),
-    fetchPayments(statusRow.id),
+    adminClient.from("student_payments").select(paymentColumns)
+      .eq("student_id", statusRow.id).order("paid_on", { ascending: false }),
   ]);
+  if (paymentsResult.error) throw new Error(paymentsResult.error.message);
+  const studentPayments = paymentsResult.data.map(mapPayment);
 
   const breakdownMap = new Map<string, RequirementBreakdown>();
   requirements.forEach((req) => {
@@ -368,13 +401,16 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
     fetchStatusCollection(),
   ]);
 
-  const perStudentRequired = requirements.reduce((sum, req) => sum + req.amount, 0);
-  const totalRequired = perStudentRequired * statuses.length;
-  const totalCollected = statuses.reduce((sum, status) => sum + status.totalPaid, 0);
-  const totalOutstanding = statuses.reduce((sum, status) => sum + status.balance, 0);
-  const fullyPaidCount = statuses.filter((status) => status.paymentStatus === "fully_paid")
-    .length;
-  const lackingCount = statuses.length - fullyPaidCount;
+  // Sum each student's actual totalRequired from the view — not a multiply,
+  // because optional requirements may vary per student in the future.
+  const totalRequired   = statuses.reduce((sum, s) => sum + s.totalRequired, 0);
+  const totalCollected  = statuses.reduce((sum, s) => sum + s.totalPaid, 0);
+  const totalOutstanding = statuses.reduce((sum, s) => sum + s.balance, 0);
+  const fullyPaidCount  = statuses.filter((s) => s.paymentStatus === "fully_paid").length;
+  // "lacking" = partial or unpaid only — students with no requirements are not lacking
+  const lackingCount    = statuses.filter(
+    (s) => s.paymentStatus === "partial" || s.paymentStatus === "unpaid"
+  ).length;
 
   return {
     totalRequired,

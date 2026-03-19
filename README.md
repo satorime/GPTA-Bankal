@@ -1,89 +1,154 @@
-## StudentPay Tracker
+# StudentPay Tracker
 
-Full-stack application for managing student payment requirements and collections. Built with Next.js App Router, Tailwind CSS, Supabase (Postgres + Auth), and React Query.
+Desktop application for managing student payment requirements and collections at **Bankal National High School**.
 
-### App Modes
+Built with Electron, Vite, React, TypeScript, Tailwind CSS, and Supabase.
 
-This repo now powers **two separate deployments** that share the same Supabase backend:
+---
 
-| Mode      | Env value                            | Routes available            | Notes                                                                 |
-|-----------|--------------------------------------|-----------------------------|-----------------------------------------------------------------------|
-| Student   | `NEXT_PUBLIC_APP_INSTANCE=student`   | `/student` + API endpoints  | `/admin` is blocked via proxy. Use the **same Supabase keys** as admin. |
-| Admin     | `NEXT_PUBLIC_APP_INSTANCE=admin`     | `/admin` + API endpoints    | `/student` is blocked via proxy. Use the **same Supabase keys** so both portals read/write the same DB. |
+## Architecture
 
-- Deploy the repo twice (e.g., `student.paytracker.com` and `admin.paytracker.com`) with different `NEXT_PUBLIC_APP_INSTANCE` values but identical Supabase credentials to ensure both apps interact with the same database.
-- The root path (`/`) now auto-redirects to the only portal available in that deployment (student or admin). The old marketing landing page has been removed.
+This is a **native desktop application** — no web server, no API routes. The React frontend calls Supabase directly. Two separate `.exe` installers are produced from one codebase.
 
-### Features
+```
+Electron (desktop shell)
+  └── Vite + React (UI, bundled to static files)
+        └── Supabase JS SDK (direct database access)
+```
 
-- Student portal to view balance, payment breakdown, and payment history.
-- Admin dashboard with cards, filters, charts, and CRUD management for students, payment requirements, and payments.
-- Status filters for fully paid vs lacking students plus a balances chart.
-- Shared Supabase schema, migrations, and REST API routes.
+---
 
-### Getting Started
+## App Modes
 
-1. **Install dependencies**
-   ```bash
-   npm install
-   ```
+| Mode    | Build command               | Output              | Who uses it                                                |
+| ------- | --------------------------- | ------------------- | ---------------------------------------------------------- |
+| Student | `npm run build:exe:student` | `dist-exe/student/` | Students — look up their own balance & payment history     |
+| Admin   | `npm run build:exe:admin`   | `dist-exe/admin/`   | Staff — full CRUD for students, requirements, and payments |
 
-2. **Configure environment**
-   - Duplicate `env.example` → `.env.local`
-   - Fill the values from your Supabase project:
-     ```
-     NEXT_PUBLIC_SUPABASE_URL=...
-     NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-     SUPABASE_SERVICE_ROLE_KEY=...
-     ```
-   - Optionally set `NEXT_PUBLIC_DEMO_STUDENT_CODE` for the student portal default.
-   - Set `NEXT_PUBLIC_APP_INSTANCE=student` **or** `NEXT_PUBLIC_APP_INSTANCE=admin` depending on which portal you are running.
+Both modes share the same Supabase database.
 
-3. **Provision Supabase**
-   ```bash
-   supabase db push --file supabase/migrations/0001_init.sql
-   ```
-   This creates tables (`students`, `payment_requirements`, `student_payments`), RLS policies, and the `student_payment_status` view.
+---
 
-4. **Run the dev server**
-   ```bash
-   # Student portal
-   npm run dev:student
+## Features
 
-   # Admin portal
-   npm run dev:admin
-   ```
-   The root path automatically redirects to the appropriate dashboard.
+**Student portal**
 
-### API surface
+- Look up payment status by student code
+- View balance, total required, and total paid
+- Requirement breakdown per fee type
+- Full payment history
 
-All routes live under `/app/api` and rely on the Supabase service-role key.
+**Admin portal**
 
-| Route | Methods | Description |
-| --- | --- | --- |
-| `/api/students` | GET, POST | List/create students |
-| `/api/students/[id]` | PATCH, DELETE | Update/delete a student |
-| `/api/requirements` | GET, POST | Manage payment requirements |
-| `/api/requirements/[id]` | PATCH, DELETE | Update/delete requirements |
-| `/api/payments` | GET, POST | List payments (optional `studentId` filter) or create |
-| `/api/payments/[id]` | PATCH, DELETE | Update/delete payment entries |
-| `/api/status` | GET | Student status lookup by `studentCode` |
-| `/api/status/all` | GET | Admin status feed with `filter=fully_paid|lacking` |
-| `/api/dashboard` | GET | Summary metrics for cards |
+- Login screen — email + password authentication (staff only)
+- Dashboard cards: total required fees, collected, outstanding, student counts
+- Balances snapshot bar chart with status filters
+- Full CRUD management for students, payment requirements, and payment records
 
-### Tech Stack
+---
 
-- Next.js 16 (App Router) + TypeScript
-- Tailwind CSS v4 + custom UI primitives
-- React Query, React Hook Form, Zod
-- Supabase (Postgres, RLS, migrations)
-- Recharts for the balances snapshot
+## Getting Started
 
-### Deployment
+### 1. Install dependencies
 
-1. Deploy the repo twice (student + admin) or set up two environments in your host.
-2. Create a Supabase project and run the migration.
-3. Configure environment variables for each deployment (notably `NEXT_PUBLIC_APP_INSTANCE`).
-4. Use `npm run build:student` / `npm run build:admin` for the respective deployments, then `npm run start` or `npm run start:admin`.
+```bash
+npm install
+```
 
-The service-role key must remain server-side only; never expose it to the client.
+### 2. Configure environment
+
+Copy `env.example` to `.env` and fill in your Supabase credentials:
+
+```bash
+cp env.example .env
+```
+
+```env
+VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# Optional: pre-fill the student code field on launch
+VITE_DEMO_STUDENT_CODE=STU-0001
+```
+
+> **Note:** The `VITE_APP_INSTANCE` variable is set automatically by the build scripts. Do not set it manually.
+
+### 3. Create admin accounts
+
+Admin accounts are managed through Supabase Authentication — no separate user table needed.
+
+1. Go to your [Supabase project dashboard](https://supabase.com/dashboard)
+2. Navigate to **Authentication → Users**
+3. Click **Invite user**
+4. Enter the email address of the teacher, cashier, or office staff
+5. They will receive an invite email with a link to set their own password
+
+> To remove access, go to **Authentication → Users** and delete their account.
+
+#### Changing passwords
+
+Staff can change their own password at any time from inside the Admin portal — no need to contact Supabase:
+
+1. Open the Admin app and sign in
+2. Click the **Change Password** button in the top-right corner of the header
+3. Enter a new password (minimum 8 characters) and confirm it
+4. Click **Update Password**
+
+This is the recommended flow when the admin assigns a temporary password: the staff member logs in with the temporary password and immediately changes it to one only they know.
+
+### 5. Provision the database
+
+Run the migration against your Supabase project:
+
+```bash
+supabase db push --file supabase/migrations/0001_init.sql
+```
+
+This creates the `students`, `payment_requirements`, and `student_payments` tables, RLS policies, and the `student_payment_status` view.
+
+---
+
+## Deploying to Render
+
+Both portals can be deployed as separate static sites on [Render](https://render.com) (free tier) from the same repository.
+
+### Prerequisites
+
+1. Push this repository to GitHub (or GitLab)
+2. Make sure your `.env` values are ready — you will enter them as environment variables in Render, **not** in the repo
+
+### Steps
+
+1. Go to [render.com](https://render.com) and sign in
+2. Click **New → Blueprint** and connect your GitHub repository
+3. Render will detect the `render.yaml` file and propose two services:
+   - `bankal-student` — the Student Portal
+   - `bankal-admin` — the Admin Portal
+4. Click **Apply** — Render will ask you to fill in the secret environment variables before deploying
+
+### Environment variables to set (for each service)
+
+| Variable                         | Where to find it                                     |
+| -------------------------------- | ---------------------------------------------------- |
+| `VITE_SUPABASE_URL`              | Supabase → Project Settings → API → Project URL      |
+| `VITE_SUPABASE_ANON_KEY`         | Supabase → Project Settings → API → anon public key  |
+| `VITE_SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → service_role key |
+
+> `VITE_DEMO_STUDENT_CODE` is optional — leave it blank or set it to a default student code to pre-fill the search field on the Student Portal.
+
+### Deploying manually (without Blueprint)
+
+If you prefer to create each site manually:
+
+**Student Portal**
+
+- Build Command: `npm run build:student`
+- Publish Directory: `dist`
+
+**Admin Portal**
+
+- Build Command: `npm run build:admin`
+- Publish Directory: `dist`
+
+Set the same three environment variables above for each service.

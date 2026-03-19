@@ -2,13 +2,11 @@ import { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
 const variants = {
-  default:
-    "bg-[var(--brand-green)] text-white hover:bg-[var(--brand-green-dark)] focus-visible:outline-[var(--brand-green)]",
-  outline:
-    "border border-lime-300 text-[var(--brand-green-dark)] hover:bg-lime-50 focus-visible:outline-[var(--brand-green)]",
-  ghost: "text-[var(--brand-green-dark)] hover:bg-lime-100/60",
-  destructive:
-    "bg-red-600 text-white hover:bg-red-500 focus-visible:outline-red-600",
+  default: "nm-btn-primary text-white px-5 py-2.5 font-semibold",
+  outline: "nm-btn text-[var(--brand-green-dark)] font-medium px-5 py-2.5",
+  ghost:
+    "text-[var(--brand-green-dark)] font-medium px-3 py-2 rounded-xl transition-all duration-200 hover:bg-[rgba(90,175,34,0.08)] active:bg-[rgba(90,175,34,0.15)]",
+  destructive: "nm-btn text-white px-5 py-2.5 font-semibold !bg-rose-500 hover:!bg-rose-600",
 };
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -27,18 +25,16 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60",
+        "inline-flex items-center justify-center text-sm transition-all duration-300 ease-out",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-green)]",
+        "disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none",
         variants[variant],
         className
       )}
       disabled={disabled ?? loading}
       {...props}
     >
-      {loading ? "Processing..." : children}
+      {loading ? "Processing…" : children}
     </button>
   );
 }
-
-
-
-
