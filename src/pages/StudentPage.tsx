@@ -12,8 +12,12 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 
 type FormValues = { code: string };
 
+const LOOKUP_COOLDOWN_MS = 2000; // 2 seconds between lookups
+
 export default function StudentPage() {
-  const [studentCode, setStudentCode] = useState("");
+  const [studentCode, setStudentCode]   = useState("");
+  const [lastLookup,  setLastLookup]    = useState(0);
+  const [cooldownMsg, setCooldownMsg]   = useState<string | null>(null);
   const form = useForm<FormValues>({ defaultValues: { code: "" } });
 
   const { data, isFetching, isError, error } = useQuery<StudentStatusDetail>({
@@ -32,7 +36,17 @@ export default function StudentPage() {
   }, [data?.paymentStatus]);
 
   const onSubmit = (values: FormValues) => {
-    setStudentCode(values.code.trim().toUpperCase());
+    const code = values.code.trim().toUpperCase();
+    if (!code) return;
+    const now = Date.now();
+    if (now - lastLookup < LOOKUP_COOLDOWN_MS) {
+      setCooldownMsg("Please wait a moment before searching again.");
+      setTimeout(() => setCooldownMsg(null), LOOKUP_COOLDOWN_MS);
+      return;
+    }
+    setLastLookup(now);
+    setCooldownMsg(null);
+    setStudentCode(code);
   };
 
   return (
@@ -83,7 +97,7 @@ export default function StudentPage() {
             el.setSelectionRange(pos, pos);
           }}
         />
-        <Button type="submit" className="inline-flex items-center gap-2 whitespace-nowrap">
+        <Button type="submit" disabled={Date.now() - lastLookup < LOOKUP_COOLDOWN_MS} className="inline-flex items-center gap-2 whitespace-nowrap">
           <Search className="h-4 w-4" />
           Search
         </Button>
@@ -92,6 +106,13 @@ export default function StudentPage() {
       {/* Loading */}
       {isFetching && (
         <p className="text-sm text-[var(--muted)] animate-pulse">Loading…</p>
+      )}
+
+      {/* Cooldown message */}
+      {cooldownMsg && (
+        <div className="nm-card border-l-4 border-amber-400 p-5">
+          <p className="text-sm text-amber-700">{cooldownMsg}</p>
+        </div>
       )}
 
       {/* Error */}

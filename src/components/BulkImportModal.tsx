@@ -7,6 +7,8 @@ import type { StudentPayload } from "@/lib/validators";
 type ParsedRow = StudentPayload & { _row: number; _valid: boolean; _errors: string[] };
 export type ImportResult = { inserted: number; skipped: number };
 
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+
 interface Props {
   onClose: () => void;
   onImport: (rows: StudentPayload[]) => Promise<ImportResult>;
@@ -48,12 +50,17 @@ function normalizeKey(k: string) {
 
 function parseSheet(ws: XLSX.WorkSheet): ParsedRow[] {
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+  const seenCodes = new Set<string>();
 
   return rawRows.map((raw, i) => {
     const mapped: Partial<Record<keyof StudentPayload, string>> = {};
     for (const [k, v] of Object.entries(raw)) {
       const field = ALIAS[normalizeKey(k)];
-      if (field) mapped[field] = String(v ?? "").trim();
+      if (!field) continue;
+      const raw_val = String(v ?? "").trim();
+      // Block formula injection: cells starting with =, +, -, @ can execute in Excel/Sheets
+      if (/^[=+\-@]/.test(raw_val)) continue;
+      mapped[field] = raw_val;
     }
 
     const errors: string[] = [];
@@ -61,8 +68,10 @@ function parseSheet(ws: XLSX.WorkSheet): ParsedRow[] {
     const firstName   = mapped.firstName   ?? "";
     const lastName    = mapped.lastName    ?? "";
 
-    if (!studentCode)           errors.push("LRN is required");
+    if (!studentCode)                errors.push("LRN is required");
     else if (studentCode.length < 3) errors.push("LRN must be at least 3 characters");
+    else if (seenCodes.has(studentCode)) errors.push("Duplicate LRN in this file");
+    else seenCodes.add(studentCode);
     if (!firstName)             errors.push("First name is required");
     if (!lastName)              errors.push("Last name is required");
 
@@ -73,7 +82,7 @@ function parseSheet(ws: XLSX.WorkSheet): ParsedRow[] {
       studentCode,
       firstName,
       lastName,
-      gradeLevel:      mapped.gradeLevel      || null,
+      gradeLevel:      mapped.gradeLevel ? (mapped.gradeLevel.replace(/^grade\s*/i, "").trim() || null) : null,
       guardianContact: mapped.guardianContact || null,
       status,
       notes:           mapped.notes           || null,
@@ -106,16 +115,46 @@ export default function BulkImportModal({ onClose, onImport }: Props) {
   const [importing, setImporting] = useState(false);
   const [result,    setResult]    = useState<ImportResult | null>(null);
   const [dragOver,  setDragOver]  = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const ALLOWED_MIME = new Set([
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv",
+    "text/plain", // some OS report .csv as text/plain
+    "",           // some browsers don't report MIME for xlsx — allow and let XLSX.read fail gracefully
+  ]);
+
   const handleFile = useCallback((file: File) => {
+    setParseError(null);
+    if (file.size > MAX_FILE_BYTES) {
+      setParseError("File is too large. Maximum size is 10 MB.");
+      return;
+    }
+    if (!ALLOWED_MIME.has(file.type)) {
+      setParseError("Invalid file type. Please upload a .xlsx, .xls, or .csv file.");
+      return;
+    }
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const data = e.target?.result;
-      const wb   = XLSX.read(data, { type: "array" });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      setRows(parseSheet(ws));
+      try {
+        const data = e.target?.result;
+        const wb   = XLSX.read(data, { type: "array" });
+        if (!wb.SheetNames.length) throw new Error("The file contains no sheets.");
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const parsed = parseSheet(ws);
+        if (parsed.length === 0) throw new Error("No data rows found. Make sure row 1 is the header and rows 2+ contain students.");
+        setRows(parsed);
+      } catch (err) {
+        setFileName("");
+        setParseError(err instanceof Error ? err.message : "Could not read the file. Make sure it is a valid .xlsx, .xls, or .csv file.");
+      }
+    };
+    reader.onerror = () => {
+      setFileName("");
+      setParseError("Failed to read the file.");
     };
     reader.readAsArrayBuffer(file);
   }, []);
@@ -220,6 +259,14 @@ export default function BulkImportModal({ onClose, onImport }: Props) {
               />
             </div>
 
+            {/* Parse error */}
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-xl bg-rose-50/70 px-4 py-3 text-sm text-rose-700">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                {parseError}
+              </div>
+            )}
+
             {/* Column guide */}
             <div className="nm-inset-sm rounded-xl px-4 py-3 text-xs text-[var(--muted)] space-y-1">
               <p className="font-semibold uppercase tracking-wide text-[var(--foreground)]">
@@ -318,7 +365,7 @@ export default function BulkImportModal({ onClose, onImport }: Props) {
             <div className="flex items-center justify-between gap-3">
               <Button
                 variant="outline"
-                onClick={() => { setRows(null); setFileName(""); }}
+                onClick={() => { setRows(null); setFileName(""); setParseError(null); }}
               >
                 Change file
               </Button>

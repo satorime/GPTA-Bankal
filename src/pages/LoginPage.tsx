@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Eye, EyeOff, LogIn } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -7,14 +7,43 @@ import { getAuthClient } from "@/lib/supabase";
 
 type FormValues = { email: string; password: string };
 
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS   = 30_000; // 30 seconds
+
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
+  const [loading,      setLoading]      = useState(false);
+  const [attempts,     setAttempts]     = useState(0);
+  const [lockedUntil,  setLockedUntil]  = useState(0);
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>();
 
+  // Tick every second while locked so the button re-enables automatically
+  useEffect(() => {
+    if (!lockedUntil) return;
+    const id = setInterval(() => {
+      if (Date.now() >= lockedUntil) {
+        setLockedUntil(0);
+        setErrorMsg(null);
+        clearInterval(id);
+      } else {
+        const secs = Math.ceil((lockedUntil - Date.now()) / 1000);
+        setErrorMsg(`Too many failed attempts. Please wait ${secs}s before trying again.`);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lockedUntil]);
+
   const onSubmit = async (values: FormValues) => {
+    // Lockout check
+    const now = Date.now();
+    if (now < lockedUntil) {
+      const secs = Math.ceil((lockedUntil - now) / 1000);
+      setErrorMsg(`Too many failed attempts. Please wait ${secs}s before trying again.`);
+      return;
+    }
+
     setErrorMsg(null);
     setLoading(true);
     try {
@@ -23,14 +52,23 @@ export default function LoginPage() {
         password: values.password,
       });
       if (error) {
-        setErrorMsg(
-          error.message === "Invalid login credentials"
-            ? "Incorrect email or password. Please try again."
-            : error.message
-        );
+        const nextAttempts = attempts + 1;
+        setAttempts(nextAttempts);
+        if (nextAttempts >= MAX_ATTEMPTS) {
+          setLockedUntil(Date.now() + LOCKOUT_MS);
+          setAttempts(0);
+          setErrorMsg(`Too many failed attempts. Please wait 30 seconds before trying again.`);
+        } else {
+          setErrorMsg(
+            error.message === "Invalid login credentials"
+              ? `Incorrect email or password. ${MAX_ATTEMPTS - nextAttempts} attempt${MAX_ATTEMPTS - nextAttempts !== 1 ? "s" : ""} remaining.`
+              : error.message
+          );
+        }
+      } else {
+        setAttempts(0);
+        // On success, onAuthStateChange in App.tsx will update the session automatically.
       }
-      // On success, onAuthStateChange in App.tsx will update the session
-      // and render AdminPage automatically — no manual redirect needed.
     } catch {
       setErrorMsg("An unexpected error occurred. Please try again.");
     } finally {
@@ -124,7 +162,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            <Button type="submit" loading={loading} className="mt-1 w-full gap-2">
+            <Button type="submit" loading={loading} disabled={Date.now() < lockedUntil} className="mt-1 w-full gap-2">
               <LogIn className="h-4 w-4" />
               Sign In
             </Button>

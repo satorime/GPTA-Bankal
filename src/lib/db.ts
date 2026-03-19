@@ -134,8 +134,10 @@ export async function fetchStudents(search?: string) {
   const client = getAuthClient();
   let query = client.from("students").select(studentColumns).order("created_at");
   if (search) {
+    // Strip PostgREST filter-syntax characters to prevent filter injection
+    const safe = search.replace(/[,.()*!<>=:]/g, "").slice(0, 100);
     query = query.or(
-      `student_code.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`
+      `student_code.ilike.%${safe}%,first_name.ilike.%${safe}%,last_name.ilike.%${safe}%`
     );
   }
   const { data, error } = await query;

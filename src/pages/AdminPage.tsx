@@ -246,6 +246,13 @@ export default function AdminPage({ session }: { session: Session }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Lock body scroll when any modal is open
+  useEffect(() => {
+    const isModalOpen = showBulkImport || Boolean(assignOpenFor);
+    document.body.style.overflow = isModalOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [showBulkImport, assignOpenFor]);
+
   // Auto-dismiss success after 3 s, error after 7 s
   useEffect(() => {
     if (!message) return;
@@ -669,8 +676,8 @@ export default function AdminPage({ session }: { session: Session }) {
                     outerRadius="75%"
                     paddingAngle={3}
                     dataKey="value"
-                    label={({ name, percent }) =>
-                      percent > 0.04 ? `${Math.round(percent * 100)}%` : ""
+                    label={({ percent }) =>
+                      (percent ?? 0) > 0.04 ? `${Math.round((percent ?? 0) * 100)}%` : ""
                     }
                     labelLine={false}
                   >
@@ -750,9 +757,13 @@ export default function AdminPage({ session }: { session: Session }) {
         if (!section) return null;
 
         // Only show ungrouped students whose grade matches the section (or either has no grade set)
+        const sectionGrade = section.gradeLevel ? String(section.gradeLevel).trim() : null;
         const ungrouped = (studentsQuery.data ?? []).filter(s => {
           if (s.sectionId) return false; // already grouped
-          if (section.gradeLevel && s.gradeLevel && s.gradeLevel !== section.gradeLevel) return false;
+          if (sectionGrade && s.gradeLevel) {
+            const studentGrade = String(s.gradeLevel).trim().replace(/^grade\s*/i, "");
+            if (studentGrade !== sectionGrade) return false;
+          }
           return true;
         });
 
@@ -781,13 +792,17 @@ export default function AdminPage({ session }: { session: Session }) {
 
         const handleAssign = async () => {
           const ids = [...assignSelected];
-          await Promise.all(ids.map(id => updateStudent(id, { sectionId: section.id })));
-          queryClient.invalidateQueries({ queryKey: ["students"] });
-          setAssignOpenFor(null);
-          setAssignSearch("");
-          setAssignSelected(new Set());
-          setExpandedSections(prev => new Set(prev).add(section.id));
-          setSuccess(`${ids.length} student${ids.length !== 1 ? "s" : ""} added to ${section.name}.`);
+          try {
+            await Promise.all(ids.map(id => updateStudent(id, { sectionId: section.id })));
+            queryClient.invalidateQueries({ queryKey: ["students"] });
+            setAssignOpenFor(null);
+            setAssignSearch("");
+            setAssignSelected(new Set());
+            setExpandedSections(prev => new Set(prev).add(section.id));
+            setSuccess(`${ids.length} student${ids.length !== 1 ? "s" : ""} added to ${section.name}.`);
+          } catch (e) {
+            setErrorText(e instanceof Error ? e.message : "Failed to assign students.");
+          }
         };
 
         const close = () => {
@@ -932,9 +947,16 @@ export default function AdminPage({ session }: { session: Session }) {
         <div className="nm-card border-l-4 border-rose-400 p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 text-rose-500 shrink-0" />
-            <p className="text-sm font-medium text-rose-700">
-              Delete <span className="font-bold">{pendingDelete.label}</span>? This cannot be undone.
-            </p>
+            <div>
+              <p className="text-sm font-medium text-rose-700">
+                Delete <span className="font-bold">{pendingDelete.label}</span>? This cannot be undone.
+              </p>
+              {pendingDelete.type === "student" && (
+                <p className="text-xs text-rose-500 mt-0.5">
+                  All payment records for this student will also be permanently deleted.
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button variant="outline" onClick={() => setPendingDelete(null)}>Cancel</Button>
@@ -1055,7 +1077,7 @@ export default function AdminPage({ session }: { session: Session }) {
                         <FolderOpen className="h-4 w-4 shrink-0 text-[var(--brand-green)]" />
                         <span className="font-semibold text-sm truncate">{section.name}</span>
                         {section.gradeLevel && (
-                          <Badge variant="default" className="text-xs">Grade {section.gradeLevel}</Badge>
+                          <Badge variant="info" className="text-xs">Grade {section.gradeLevel}</Badge>
                         )}
                         <span className="text-xs text-[var(--muted)] shrink-0">{sectionStudents.length} students</span>
                       </div>
@@ -1120,8 +1142,12 @@ export default function AdminPage({ session }: { session: Session }) {
                                     variant="ghost"
                                     title="Remove from section (keep student)"
                                     onClick={async () => {
-                                      await updateStudent(student.id, { sectionId: null });
-                                      queryClient.invalidateQueries({ queryKey: ["students"] });
+                                      try {
+                                        await updateStudent(student.id, { sectionId: null });
+                                        queryClient.invalidateQueries({ queryKey: ["students"] });
+                                      } catch (e) {
+                                        setErrorText(e instanceof Error ? e.message : "Failed to remove student from section.");
+                                      }
                                     }}
                                   >
                                     <FolderOpen className="h-4 w-4 text-amber-500" />

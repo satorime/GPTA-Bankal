@@ -19,7 +19,7 @@ export const sectionSchema = z.object({
 export const paymentRequirementSchema = z.object({
   label: z.string().min(2),
   description: z.string().optional().nullable(),
-  amount: z.number().nonnegative(),
+  amount: z.number().positive(),
   dueDate: z.string().optional().nullable(),
   isRequired: z.boolean().default(true),
 });

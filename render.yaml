@@ -2,9 +2,18 @@ services:
   # ── Student Portal ─────────────────────────────────────────────
   - type: web
     name: bankal-student
-    env: static
     buildCommand: npm run build:student
     staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
     routes:
       # Rewrite all paths to index.html (single-page app)
       - type: rewrite
@@ -23,9 +32,18 @@ services:
   # ── Admin Portal ───────────────────────────────────────────────
   - type: web
     name: bankal-admin
-    env: static
     buildCommand: npm run build:admin
     staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
     routes:
       # Rewrite all paths to index.html (single-page app)
       - type: rewrite
